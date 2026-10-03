@@ -1,0 +1,543 @@
+package com.aiusage.monitor.ui.account;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.Insets;
+import android.graphics.Typeface;
+import android.os.Build;
+import android.os.Bundle;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextUtils;
+import android.text.TextWatcher;
+import android.view.Gravity;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.aiusage.monitor.AppGraph;
+import com.aiusage.monitor.account.AccountManager;
+import com.aiusage.monitor.auth.AuthException;
+import com.aiusage.monitor.auth.AuthType;
+import com.aiusage.monitor.auth.BridgeAuthAdapter;
+import com.aiusage.monitor.auth.CredentialPayload;
+import com.aiusage.monitor.model.Account;
+import com.aiusage.monitor.provider.AuthContext;
+import com.aiusage.monitor.provider.codex.CodexProvider;
+import com.aiusage.monitor.provider.deepseek.DeepSeekProvider;
+import com.aiusage.monitor.ui.UiKit;
+import com.aiusage.monitor.usage.UsageRepository;
+import com.aiusage.monitor.widget.WidgetUpdateManager;
+
+/**
+ * Adds a new account or edits an existing one. Spec §51.
+ *
+ * <p>The screen exists to keep one promise: an account is an identity, not a
+ * key. Renaming one, changing its key, enabling or disabling it all leave its
+ * id alone, which is what keeps its balance history and any widget pointed at
+ * it intact. Nothing here can change an account id.
+ *
+ * <p>Only DeepSeek is offered in Phase 2. The provider id is read from
+ * {@link DeepSeekProvider#ID} rather than typed as a literal, so registering a
+ * second provider later is a change here and in the registry, not a search for
+ * hard-coded strings.
+ */
+public final class AccountEditActivity extends Activity {
+
+    /** The account being edited, or absent when adding one. */
+    public static final String EXTRA_ACCOUNT_ID = "com.aiusage.monitor.extra.ACCOUNT_ID";
+
+    private AppGraph graph;
+    private AccountManager accountManager;
+    private UsageRepository usageRepository;
+
+    /** Null while adding; set while editing. */
+    private Account account;
+
+    private EditText nameInput;
+    private EditText keyInput;
+    private EditText bridgeUrlInput;
+    private EditText bridgeTokenInput;
+    private CheckBox rememberKey;
+    private CheckBox enabledBox;
+    private LinearLayout warningBox;
+    private LinearLayout keyCard;
+    private LinearLayout bridgeCard;
+    private TextView subtitle;
+    private TextView privacy;
+    private TextView providerHint;
+    private TextView deepSeekChip;
+    private TextView codexChip;
+
+    /**
+     * The provider the form is configured for. Chosen when adding, fixed when
+     * editing: an account's provider is part of what its stored history means, so
+     * switching one would relabel rows that were written by the other.
+     */
+    private String providerId = DeepSeekProvider.ID;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        graph = AppGraph.get(this);
+        // Migration runs before the account is looked up: on a fresh upgrade
+        // the imported account must be findable, and on an empty install the
+        // missing account must mean "add" rather than "error".
+        graph.ensureMigrated();
+
+        accountManager = graph.accountManager();
+        usageRepository = graph.usageRepository();
+
+        String accountId = getIntent() == null ? null : getIntent().getStringExtra(EXTRA_ACCOUNT_ID);
+        if (!TextUtils.isEmpty(accountId)) {
+            account = accountManager.find(accountId);
+        }
+
+        configureWindow();
+        buildInterface();
+        loadAccount();
+        applyProviderSelection();
+    }
+
+    private void configureWindow() {
+        Window window = getWindow();
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(UiKit.COLOR_BG);
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.setNavigationBarDividerColor(UiKit.COLOR_BG);
+        }
+    }
+
+    private boolean isEditing() {
+        return account != null;
+    }
+
+    private void buildInterface() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setScrollbarFadingEnabled(true);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setBackgroundColor(UiKit.COLOR_BG);
+        scroll.setPadding(UiKit.dp(this, 20), UiKit.dp(this, 22),
+                UiKit.dp(this, 20), UiKit.dp(this, 22));
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(content, UiKit.matchWrap(this, 0));
+
+        TextView kicker = UiKit.text(this, "AI USAGE MONITOR", 11, UiKit.COLOR_MUTED, Typeface.BOLD);
+        kicker.setLetterSpacing(0.18f);
+        content.addView(kicker, UiKit.matchWrap(this, 0));
+
+        TextView title = UiKit.text(this, isEditing() ? "编辑账户" : "添加账户", 31,
+                UiKit.COLOR_TEXT, Typeface.BOLD);
+        title.setIncludeFontPadding(false);
+        content.addView(title, UiKit.matchWrap(this, 8));
+
+        subtitle = UiKit.text(this, "", 14, UiKit.COLOR_MUTED, Typeface.NORMAL);
+        subtitle.setLineSpacing(0f, 1.15f);
+        content.addView(subtitle, UiKit.matchWrap(this, 8));
+
+        // ---------------------------------------------------------- name
+        LinearLayout nameCard = UiKit.card(this);
+        nameCard.addView(label("账户名称"), UiKit.matchWrap(this, 0));
+
+        nameInput = new EditText(this);
+        nameInput.setSingleLine(true);
+        nameInput.setTextSize(15);
+        nameInput.setTextColor(UiKit.COLOR_TEXT);
+        nameInput.setHint("例如 DeepSeek 个人");
+        nameInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        nameInput.setBackground(UiKit.roundRect(this, UiKit.COLOR_INPUT, UiKit.COLOR_BORDER, 12, 1));
+        nameInput.setPadding(UiKit.dp(this, 14), UiKit.dp(this, 13), UiKit.dp(this, 14), UiKit.dp(this, 13));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nameInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        }
+        nameCard.addView(nameInput, UiKit.matchWrap(this, 10));
+        content.addView(nameCard, UiKit.matchWrap(this, 28));
+
+        // ------------------------------------------------------ provider
+        LinearLayout providerCard = UiKit.card(this);
+        providerCard.addView(label("服务商"), UiKit.matchWrap(this, 0));
+
+        LinearLayout providerRow = new LinearLayout(this);
+        providerRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        deepSeekChip = UiKit.actionButton(this, "DeepSeek", true);
+        deepSeekChip.setContentDescription("服务商 DeepSeek");
+        deepSeekChip.setOnClickListener(view -> chooseProvider(DeepSeekProvider.ID));
+        providerRow.addView(deepSeekChip, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        codexChip = UiKit.actionButton(this, "OpenAI Codex", false);
+        codexChip.setContentDescription("服务商 OpenAI Codex");
+        codexChip.setOnClickListener(view -> chooseProvider(CodexProvider.ID));
+        LinearLayout.LayoutParams codexParams = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        codexParams.leftMargin = UiKit.dp(this, 12);
+        providerRow.addView(codexChip, codexParams);
+
+        providerCard.addView(providerRow, UiKit.matchWrap(this, 12));
+
+        providerHint = UiKit.text(this, "", 11, UiKit.COLOR_HINT, Typeface.NORMAL);
+        providerHint.setLineSpacing(UiKit.dp(this, 2), 1.15f);
+        providerCard.addView(providerHint, UiKit.matchWrap(this, 8));
+        content.addView(providerCard, UiKit.matchWrap(this, 16));
+
+        // ----------------------------------------------------------- key
+        keyCard = UiKit.card(this);
+        keyCard.addView(label("API KEY"), UiKit.matchWrap(this, 0));
+
+        keyInput = new EditText(this);
+        keyInput.setSingleLine(true);
+        keyInput.setTextSize(15);
+        keyInput.setTextColor(UiKit.COLOR_TEXT);
+        keyInput.setHint("sk-...");
+        keyInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        keyInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        keyInput.setBackground(UiKit.roundRect(this, UiKit.COLOR_INPUT, UiKit.COLOR_BORDER, 12, 1));
+        keyInput.setPadding(UiKit.dp(this, 14), UiKit.dp(this, 13), UiKit.dp(this, 14), UiKit.dp(this, 13));
+        keyInput.setSelectAllOnFocus(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            keyInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        }
+        keyCard.addView(keyInput, UiKit.matchWrap(this, 10));
+
+        LinearLayout rememberRow = new LinearLayout(this);
+        rememberRow.setOrientation(LinearLayout.HORIZONTAL);
+        rememberRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        rememberKey = new CheckBox(this);
+        rememberKey.setText("记住密钥");
+        rememberKey.setTextSize(13);
+        rememberKey.setTextColor(UiKit.COLOR_MUTED);
+        rememberKey.setButtonTintList(ColorStateList.valueOf(UiKit.COLOR_BUTTON));
+        rememberKey.setPadding(0, 0, 0, 0);
+        rememberRow.addView(rememberKey, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView localOnly = UiKit.text(this, "仅存本机", 12, UiKit.COLOR_HINT, Typeface.NORMAL);
+        localOnly.setGravity(Gravity.END);
+        rememberRow.addView(localOnly, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        keyCard.addView(rememberRow, UiKit.matchWrap(this, 8));
+
+        warningBox = new LinearLayout(this);
+        warningBox.setOrientation(LinearLayout.VERTICAL);
+        warningBox.setVisibility(View.GONE);
+        keyCard.addView(warningBox, UiKit.matchWrap(this, 8));
+
+        content.addView(keyCard, UiKit.matchWrap(this, 16));
+
+        // --------------------------------------------------------- bridge
+        bridgeCard = UiKit.card(this);
+        bridgeCard.addView(label("电脑端 Bridge"), UiKit.matchWrap(this, 0));
+
+        bridgeUrlInput = new EditText(this);
+        bridgeUrlInput.setSingleLine(true);
+        bridgeUrlInput.setTextSize(15);
+        bridgeUrlInput.setTextColor(UiKit.COLOR_TEXT);
+        bridgeUrlInput.setHint("http://10.0.2.2:38411");
+        bridgeUrlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        bridgeUrlInput.setBackground(UiKit.roundRect(this, UiKit.COLOR_INPUT, UiKit.COLOR_BORDER, 12, 1));
+        bridgeUrlInput.setPadding(UiKit.dp(this, 14), UiKit.dp(this, 13), UiKit.dp(this, 14), UiKit.dp(this, 13));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            bridgeUrlInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        }
+        bridgeCard.addView(bridgeUrlInput, UiKit.matchWrap(this, 10));
+
+        TextView urlHint = UiKit.text(this,
+                "手机上的模拟器用 10.0.2.2 访问电脑本机；Bridge 只监听 127.0.0.1。",
+                11, UiKit.COLOR_HINT, Typeface.NORMAL);
+        urlHint.setLineSpacing(UiKit.dp(this, 2), 1.15f);
+        bridgeCard.addView(urlHint, UiKit.matchWrap(this, 8));
+
+        bridgeTokenInput = new EditText(this);
+        bridgeTokenInput.setSingleLine(true);
+        bridgeTokenInput.setTextSize(15);
+        bridgeTokenInput.setTextColor(UiKit.COLOR_TEXT);
+        bridgeTokenInput.setHint("临时令牌（当前版本可留空）");
+        bridgeTokenInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        bridgeTokenInput.setBackground(UiKit.roundRect(this, UiKit.COLOR_INPUT, UiKit.COLOR_BORDER, 12, 1));
+        bridgeTokenInput.setPadding(UiKit.dp(this, 14), UiKit.dp(this, 13), UiKit.dp(this, 14), UiKit.dp(this, 13));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            bridgeTokenInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        }
+        bridgeCard.addView(bridgeTokenInput, UiKit.matchWrap(this, 10));
+        content.addView(bridgeCard, UiKit.matchWrap(this, 16));
+
+        // ------------------------------------------------------- enabled
+        LinearLayout enabledCard = UiKit.card(this);
+
+        enabledBox = new CheckBox(this);
+        enabledBox.setText("启用此账户");
+        enabledBox.setTextSize(15);
+        enabledBox.setTextColor(UiKit.COLOR_TEXT);
+        enabledBox.setButtonTintList(ColorStateList.valueOf(UiKit.COLOR_BUTTON));
+        enabledBox.setPadding(0, 0, 0, 0);
+        enabledCard.addView(enabledBox, UiKit.matchWrap(this, 0));
+
+        TextView enabledHint = UiKit.text(this,
+                "停用后不再参与自动刷新，余额、历史与 Widget 绑定都会保留。",
+                11, UiKit.COLOR_HINT, Typeface.NORMAL);
+        enabledHint.setLineSpacing(UiKit.dp(this, 2), 1.15f);
+        enabledCard.addView(enabledHint, UiKit.matchWrap(this, 6));
+        content.addView(enabledCard, UiKit.matchWrap(this, 16));
+
+        // ------------------------------------------------------- actions
+        TextView saveButton = UiKit.actionButton(this, isEditing() ? "保存修改" : "添加账户", true);
+        saveButton.setContentDescription("保存");
+        saveButton.setOnClickListener(view -> save());
+        content.addView(saveButton, UiKit.matchHeight(this, 52, 20));
+
+        if (isEditing()) {
+            TextView deleteButton = UiKit.actionButton(this, "删除账户", false);
+            deleteButton.setContentDescription("删除账户");
+            deleteButton.setOnClickListener(view -> confirmDelete());
+            content.addView(deleteButton, UiKit.matchHeight(this, 52, 12));
+        }
+
+        privacy = UiKit.text(this, "", 11, UiKit.COLOR_HINT, Typeface.NORMAL);
+        privacy.setGravity(Gravity.CENTER);
+        privacy.setLineSpacing(UiKit.dp(this, 2), 1.15f);
+        content.addView(privacy, UiKit.matchWrap(this, 18));
+
+        setContentView(scroll);
+        applyInsets(scroll);
+    }
+
+    /**
+     * Switches the form between the two providers. Adding an account may choose;
+     * editing keeps its own, because the account's history was written by the
+     * provider it already has.
+     */
+    private void chooseProvider(String id) {
+        if (isEditing()) {
+            return;
+        }
+        providerId = id;
+        applyProviderSelection();
+    }
+
+    /** Shows only the fields the chosen provider has, and says why in its own words. */
+    private void applyProviderSelection() {
+        boolean codex = CodexProvider.ID.equals(providerId);
+
+        keyCard.setVisibility(codex ? View.GONE : View.VISIBLE);
+        bridgeCard.setVisibility(codex ? View.VISIBLE : View.GONE);
+
+        deepSeekChip.setAlpha(codex ? 0.45f : 1f);
+        codexChip.setAlpha(codex ? 1f : 0.45f);
+
+        if (isEditing()) {
+            providerHint.setText(codex
+                    ? "服务商不可更改：这个账户的历史是由它原来的服务商写入的。"
+                    : "服务商不可更改：这个账户的历史是由它原来的服务商写入的。");
+        } else {
+            providerHint.setText(codex
+                    ? "OpenAI Codex 没有余额，只有 5 小时与每周额度窗口，需要通过本机运行的 AI Usage Bridge 读取。"
+                    : "DeepSeek 使用平台 API Key 直接查询余额。");
+        }
+
+        subtitle.setText(isEditing()
+                ? "修改名称、密钥或启用状态。账户 ID 与历史记录不会改变。"
+                : (codex ? "给这台电脑上的 Codex 账户起个名字，便于在列表中区分。"
+                        : "为这个 DeepSeek API Key 起一个名字，便于在列表中区分。"));
+
+        privacy.setText(codex
+                ? "地址与令牌只发给本机 Bridge，不会离开这台电脑；Codex 的登录信息不由本应用保存。"
+                : "密钥仅发送给 api.deepseek.com。勾选“记住密钥”后，密钥只保存在本机应用私有存储中。");
+    }
+
+    private TextView label(String value) {
+        TextView label = UiKit.text(this, value, 11, UiKit.COLOR_MUTED, Typeface.BOLD);
+        label.setLetterSpacing(0.12f);
+        return label;
+    }
+
+    private void applyInsets(View root) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+            root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+                Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
+                view.setPadding(UiKit.dp(this, 20), UiKit.dp(this, 22) + bars.top,
+                        UiKit.dp(this, 20), UiKit.dp(this, 22) + bars.bottom);
+                return windowInsets;
+            });
+            root.requestApplyInsets();
+        }
+    }
+
+    /** Fills the form from the account being edited. */
+    private void loadAccount() {
+        if (!isEditing()) {
+            enabledBox.setChecked(true);
+            return;
+        }
+        providerId = account.getProviderId();
+        nameInput.setText(account.getDisplayName());
+        nameInput.setSelection(nameInput.getText().length());
+        enabledBox.setChecked(account.isEnabled());
+
+        try {
+            AuthContext saved = accountManager.openCredential(account);
+            if (CodexProvider.ID.equals(providerId)) {
+                String url = saved.get(AuthContext.KEY_BRIDGE_URL);
+                if (!TextUtils.isEmpty(url)) {
+                    bridgeUrlInput.setText(url);
+                    bridgeUrlInput.setSelection(url.length());
+                }
+                String token = saved.get(AuthContext.KEY_DEVICE_TOKEN);
+                if (!TextUtils.isEmpty(token)) {
+                    bridgeTokenInput.setText(token);
+                    bridgeTokenInput.setSelection(token.length());
+                }
+            } else {
+                String savedKey = saved.get(AuthContext.KEY_API_KEY);
+                if (!TextUtils.isEmpty(savedKey)) {
+                    keyInput.setText(savedKey);
+                    keyInput.setSelection(savedKey.length());
+                    rememberKey.setChecked(true);
+                }
+            }
+        } catch (AuthException ignored) {
+            // No usable credential: the fields stay empty, which is the honest
+            // representation of an account whose key was never stored.
+        }
+
+        if (accountManager.isCredentialDegraded(account)) {
+            addWarning("密钥保护降级：当前密钥未能使用硬件加密存储，建议重新输入并保存。",
+                    UiKit.COLOR_PEAK);
+        }
+        if (account.getCredentialId() == null || account.getCredentialId().isEmpty()) {
+            addWarning(CodexProvider.ID.equals(providerId)
+                    ? "此账户尚未保存 Bridge 地址，刷新时会提示没有填写电脑端 Bridge 地址。"
+                    : "此账户尚未保存密钥，刷新时会提示 API Key 无效或已失效。",
+                    UiKit.COLOR_HINT);
+        }
+    }
+
+    private void addWarning(String message, int color) {
+        TextView warning = UiKit.text(this, message, 11, color, Typeface.NORMAL);
+        warning.setLineSpacing(UiKit.dp(this, 2), 1.15f);
+        warningBox.addView(warning, UiKit.matchWrap(this, warningBox.getChildCount() == 0 ? 0 : 6));
+        warningBox.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * Writes the form back.
+     *
+     * <p>Every branch keeps the account id: adding creates one, editing reuses
+     * it. A key change goes through {@code replaceCredential}, which updates the
+     * credential row rather than rebuilding the account, so history and widget
+     * bindings survive. Spec §14.
+     */
+    private void save() {
+        String name = nameInput.getText().toString().trim();
+        if (name.isEmpty()) {
+            Toast.makeText(this, "账户名称不能为空", Toast.LENGTH_SHORT).show();
+            nameInput.requestFocus();
+            return;
+        }
+
+        String key = keyInput.getText().toString().trim();
+        boolean remember = rememberKey.isChecked();
+        boolean enabled = enabledBox.isChecked();
+        boolean codex = CodexProvider.ID.equals(providerId);
+        String bridgeUrl = codex ? bridgeUrlInput.getText().toString().trim() : "";
+        String bridgeToken = codex ? bridgeTokenInput.getText().toString().trim() : "";
+
+        if (codex) {
+            // Checked before anything is written, so a typo is reported while the
+            // user is still looking at the field. No request is made here: probing
+            // the host the user just typed would connect somewhere before anything
+            // authorises it. Spec §53 rule 22.
+            try {
+                new BridgeAuthAdapter().validate(CredentialPayload.forBridge(bridgeUrl, bridgeToken));
+            } catch (AuthException exception) {
+                Toast.makeText(this, exception.getMessage(), Toast.LENGTH_LONG).show();
+                bridgeUrlInput.requestFocus();
+                return;
+            }
+        }
+
+        try {
+            if (!isEditing()) {
+                // Created without a credential first, then given one: an account
+                // with no key is a legitimate state, so a failure to encode the
+                // key must not roll back the account the user just named.
+                Account created = accountManager.createAccount(
+                        providerId, name, codex ? AuthType.BRIDGE_TOKEN : AuthType.API_KEY);
+                if (codex) {
+                    // Always stored, and there is no "remember" choice to make: the
+                    // address is configuration the app cannot work without, so an
+                    // account that kept none could never be refreshed.
+                    accountManager.replaceCredential(created.getId(),
+                            CredentialPayload.forBridge(bridgeUrl, bridgeToken));
+                } else if (remember && !key.isEmpty()) {
+                    accountManager.replaceCredential(created.getId(), CredentialPayload.forApiKey(key));
+                }
+                if (!enabled) {
+                    accountManager.setEnabled(created.getId(), false);
+                }
+            } else {
+                String accountId = account.getId();
+                if (!name.equals(account.getDisplayName())) {
+                    accountManager.rename(accountId, name);
+                }
+                if (enabled != account.isEnabled()) {
+                    accountManager.setEnabled(accountId, enabled);
+                }
+                if (codex) {
+                    accountManager.replaceCredential(accountId,
+                            CredentialPayload.forBridge(bridgeUrl, bridgeToken));
+                } else if (remember && !key.isEmpty()) {
+                    accountManager.replaceCredential(accountId, CredentialPayload.forApiKey(key));
+                } else if (!remember) {
+                    // Unticking "remember" is how a user forgets a key without
+                    // deleting the account. §14.
+                    accountManager.clearCredential(accountId);
+                }
+            }
+        } catch (AuthException exception) {
+            Toast.makeText(this, "无法保存密钥，请检查内容后重试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // A key change or an enable/disable changes what every widget bound to
+        // this account should show.
+        new WidgetUpdateManager(this).updateAllWidgets();
+        Toast.makeText(this, isEditing() ? "已保存修改" : "已添加账户", Toast.LENGTH_SHORT).show();
+        finish();
+    }
+
+    private void confirmDelete() {
+        new AlertDialog.Builder(this)
+                .setTitle("删除账户")
+                .setMessage("将删除「" + account.getDisplayName() + "」及其余额历史。此操作无法撤销。")
+                .setPositiveButton("删除", (dialog, which) -> {
+                    // The history cleaner is the usage layer's own delete, so
+                    // the account layer never reaches into usage storage. §45.
+                    accountManager.delete(account.getId(), usageRepository::deleteForAccount);
+                    // Widgets bound to the deleted account fall back to the
+                    // first enabled one rather than drawing nothing. Spec §39.
+                    new WidgetUpdateManager(this).updateAllWidgets();
+                    Toast.makeText(this, "已删除账户", Toast.LENGTH_SHORT).show();
+                    finish();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+}

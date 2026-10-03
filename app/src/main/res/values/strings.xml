@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AI Usage Monitor</string>
+    <string name="widget_2x1_description">AI Usage 2×1</string>
+    <string name="widget_2x2_description">AI Usage 2×2</string>
+    <string name="widget_4x2_description">AI Usage 4×2</string>
+
+    <!--
+        The fixed captions a widget draws. Everything else on a widget is a value
+        the renderer writes at update time, so those views carry no android:text at
+        all: a placeholder here would be a string the user could momentarily see
+        and a translation nobody ever reads.
+    -->
+    <string name="widget_caption">AI Usage</string>
+    <string name="widget_refresh">刷新</string>
+    <string name="widget_label_today_usage">今日用量</string>
+    <string name="widget_label_current_period">当前时段</string>
+    <!-- The value every widget cell holds before a reading exists. -->
+    <string name="widget_placeholder">—</string>
+    <!-- The quota block on the detail screen (Phase 6). Formatted rather than
+         concatenated: building the sentence out of "+" inside setText is exactly
+         what SetTextI18n flags, and a resource with a placeholder also keeps the
+         heading translatable with the window lines. -->
+    <string name="quota_window_block">额度窗口
+%1$s</string>
+</resources>

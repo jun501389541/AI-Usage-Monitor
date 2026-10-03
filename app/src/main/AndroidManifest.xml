@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!--
+    networkSecurityConfig is reported as unused below API 24, and that is a real
+    limitation rather than noise: on an API 23 device the scoped cleartext
+    exception does not apply, so the local Machine Bridge cannot be reached while
+    usesCleartextTraffic stays false. Left as a lint warning on purpose - the
+    choice is to raise minSdk to 24 or to tell the user the Bridge needs 24+, not
+    to silence it with tools:ignore.
+-->
+<application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false">
+        <!--
+            Phase 2: the launcher is the account list, and the balance screen is
+            the detail page for one account. MainActivity keeps no intent-filter
+            of its own: reaching it without an account id is supported (it falls
+            back to the first account) but it is no longer an entry point.
+        -->
+        <activity
+            android:name="com.aiusage.monitor.ui.account.AccountListActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name="com.aiusage.monitor.ui.MainActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name="com.aiusage.monitor.ui.account.AccountEditActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <!--
+            Configured by the launcher while a widget is placed, so it must be
+            exported and reachable from outside the app. It always returns
+            RESULT_CANCELED unless the user picks an account.
+        -->
+        <activity
+            android:name="com.aiusage.monitor.widget.WidgetConfigActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <receiver
+            android:name="com.aiusage.monitor.widget.BalanceWidget4x2Provider"
+            android:exported="true"
+            android:label="AI Usage 4×2">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/balance_widget_4x2_info" />
+        </receiver>
+        <receiver
+            android:name="com.aiusage.monitor.widget.BalanceWidget2x2Provider"
+            android:exported="true"
+            android:label="AI Usage 2×2">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/balance_widget_2x2_info" />
+        </receiver>
+        <receiver
+            android:name="com.aiusage.monitor.widget.BalanceWidget2x1Provider"
+            android:exported="true"
+            android:label="AI Usage 2×1">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/balance_widget_2x1_info" />
+        </receiver>
+        <receiver
+            android:name="com.aiusage.monitor.widget.WidgetRefreshReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>    </application>
+
+</manifest>

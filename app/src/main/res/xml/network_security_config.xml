@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cleartext HTTP is allowed for the local Machine Bridge and nowhere else.
+
+    The app keeps android:usesCleartextTraffic="false" and narrows the exception
+    here instead, because the Bridge speaks plain HTTP on a user's own machine
+    (Phase 5 / Phase 6), while everything else the app fetches - DeepSeek's API -
+    is HTTPS. Flipping the global switch would have been one attribute and would
+    have silently downgraded every other request the app ever makes, including any
+    future one. Spec §50 treats a credential channel as something to bound, not
+    something to trust by habit.
+
+    10.0.2.2 is how an Android emulator reaches the host machine's loopback; the
+    Bridge binds 127.0.0.1 only, and that stays true in this phase
+    (docs/PHASE-6-PLAN.md D1). localhost covers a device reaching its own proxy.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

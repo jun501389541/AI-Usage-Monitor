@@ -1,0 +1,15 @@
+[versions]
+androidGradlePlugin = "9.0.1"
+junit = "4.13.2"
+# Real org.json for host-side unit tests only. The android.jar shipped with the
+# SDK contains org.json.* stubs whose methods throw, so a JVM unit test that
+# exercises JSON needs the genuine artifact on the test classpath.
+# Never added to implementation: the production APK stays dependency-free.
+orgJson = "20240303"
+
+[libraries]
+junit = { module = "junit:junit", version.ref = "junit" }
+org-json = { module = "org.json:json", version.ref = "orgJson" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

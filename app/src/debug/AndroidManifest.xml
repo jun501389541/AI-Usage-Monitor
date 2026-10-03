@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-variant manifest overlay.
+
+  It contributes only the smoke-test affordance that asks the launcher to pin a
+  widget, so the device test does not have to drive the launcher's drag-and-drop
+  gesture over adb. Merged into debug builds only.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <activity
+            android:name="com.aiusage.monitor.debug.PinWidgetActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+    </application>
+
+</manifest>

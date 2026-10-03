@@ -1,0 +1,47 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android SDK location (machine-specific, must never be committed)
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+captures/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# GraphFlow local index and generated context artifacts
+.graphflow-cache/
+graphflow-out/
+
+# Build outputs / artifacts
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+unsigned.apk
+*.keystore
+*.jks
+
+# Verification scratch (smoke-test DB dumps, screenshots)
+tools/smoke/out/
+
+# Gradle run logs (gradlew output is routinely redirected here)
+*.log
+
+# Commit message scratch file: `git add -A` sweeps it in otherwise, because it
+# only exists between writing the message and running `git commit -F`.
+commitmsg.txt
+
+# Go bridge (Phase 5): `go build ./...` drops the exe next to go.mod, so ignore it
+# at the module root as well as under bin/.
+bridge/bin/
+bridge/*.exe
