@@ -91,8 +91,15 @@ public final class CodexProvider implements UsageProvider {
         // here as well was dead code: AuthContext.get() answers "" for a missing
         // key, so the "null" branch could not run, and a mutation that defaulted
         // the address still passed every test until that was noticed.
+        //
+        // The digest travels the same way on purpose. It is not a secret and not a
+        // credential — it is the thing that decides *which machine* may answer — so
+        // the provider layer treats it exactly like the address: read it from the
+        // context, hand it down, let the data source refuse a combination that cannot
+        // be trusted (docs/PHASE-7-PLAN.md A5/A9).
         return dataSource.fetch(authContext.get(AuthContext.KEY_BRIDGE_URL),
                 authContext.get(AuthContext.KEY_DEVICE_TOKEN),
+                authContext.get(AuthContext.KEY_BRIDGE_PIN),
                 account.getId(), System.currentTimeMillis());
     }
 }

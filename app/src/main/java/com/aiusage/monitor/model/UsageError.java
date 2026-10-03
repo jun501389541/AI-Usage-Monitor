@@ -23,6 +23,16 @@ public enum UsageError {
     SERVICE_UNAVAILABLE("服务暂时不可用，请稍后再试"),
     BRIDGE_OFFLINE("电脑离线，显示的是上次数据"),
     BRIDGE_UNAUTHORIZED("电脑端授权已失效，请重新配对"),
+    /**
+     * The account points at a computer this phone no longer has a pairing for —
+     * the row is gone, or the account was never paired at all. Distinct from
+     * {@link #BRIDGE_UNAUTHORIZED}, which is the computer answering "no" to a token:
+     * here no request can even be addressed, and telling the user their authorisation
+     * expired would send them to re-run a pairing that has not happened. Phase 7
+     * step 9, and Spec §53 rule 19's "撤销/过期 must stay distinguishable from
+     * 电脑离线" taken one step further.
+     */
+    BRIDGE_PAIRING_REQUIRED("还没有与这台电脑配对，或配对已被撤销"),
     UNSUPPORTED("当前服务不支持该操作"),
     UNKNOWN("数据解析失败，请稍后重试");
 

@@ -40,6 +40,18 @@ public final class AuthContext {
      */
     public static final String KEY_BRIDGE_URL = "bridgeUrl";
 
+    /**
+     * Key name for the certificate digest this connection must be pinned to: hex
+     * SHA-256 of the Bridge's SubjectPublicKeyInfo, from its {@code bridges} row.
+     *
+     * <p>Not a secret — the Bridge advertises the same digest on its plaintext health
+     * endpoint and prints it for a human to compare (A11) — but it is what turns the
+     * address above from "somebody answered" into "the computer I paired with
+     * answered". An empty value means the account was typed in by hand and has no
+     * pairing, which is Phase 6's behaviour and stays plaintext.
+     */
+    public static final String KEY_BRIDGE_PIN = "bridgePin";
+
     private final AuthType authType;
     private final Map<String, String> values;
 

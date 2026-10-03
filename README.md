@@ -8,10 +8,12 @@ Android 应用，用于查看 AI 服务平台的余额与用量，并提供桌�
 已完成 **Phase 0（Gradle 基线）、Phase 1（架构分层）、Phase 2（多账户）、
 Phase 3（通用 Account Widget：Slot 模型、状态与更新时间、手动刷新）、
 Phase 4（历史快照的区间读取与保留策略）、Phase 5（Windows AI Usage Bridge
-MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）**。应用名
+MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）、Phase 7（手机与电脑配对：
+三种引入通道、SPKI 指纹钉定与逐连接主机名校验、`bridges` 表、配对与设备界面）**。应用名
 `AI Usage Monitor`，包名 / applicationId `com.aiusage.monitor`
 （`versionCode 57` / `versionName 4.0.0`）。Phase 7+（二维码配对、局域网自动发现、
-Direct OAuth、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸）尚未开始。
+Direct OAuth、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸）尚未开始——其中二维码
+是 Phase 7 唯一没有落地的通道，等 D1（解码库依赖）决定后再开。
 
 ## 当前功能
 
@@ -99,6 +101,37 @@ go build -o bin\aiusage-bridge.exe .\cmd\aiusage-bridge
 留空则自己找——Windows 上 `where codex` 只会给到 npm 的 `.cmd` shim，Go 无法直接
 启动批处理，所以找的是包目录里的原生 `codex.exe`）、`--data-dir`、`--ttl`、`--timeout`。
 
+## 手机与电脑配对（Phase 7）
+
+Phase 6 的 hand-typed 地址是调试通道；正式通道是让手机认识这台电脑。
+
+```powershell
+cd bridge
+go build -o bin\aiusage-bridge.exe .\cmd\aiusage-bridge
+.\bin\aiusage-bridge.exe --pair --host 192.168.1.20 --port 38411 --data-dir D:\bridge-data
+```
+
+- `--pair` 打开 TLS（自签 RSA-2048 身份，指纹 = 证书 SPKI 的 SHA-256）并要求设备令牌；
+  **绑定到非回环地址而没有 `--pair` 时进程直接启动失败**，不会悄悄裸奔。
+- 引入通道三条：① 整段 payload（`aiusage://pair#<base64url(json)>`，深链或粘贴）；
+  ② 手输「地址 + 端口 + 8 位配对码」，先出指纹尾号、由人勾选确认后才发送配对码（A11）；
+  ③ 二维码 —— 等 D1，未实现。配对码字母表排除了易混的 `0o1i2l`。
+- pair token 一次性、`--pair-ttl` 过期即失效；换回来的 Device Token 长期有效，
+  落盘只有哈希，明文既不进数据库也不进日志。
+- 手机侧 `bridges` 表（schema v3；v2→v3 是单事务迁移，并在真机上彩排过「备份→降到 v2→
+  升回 v3→逐表比对→字节级还原」的往返）按 **Bridge ID** 记一台电脑，
+  地址只是它的可变属性；账户通过 `accounts.bridge_id` 指过去，不再各存一份地址。
+- 每条连接都按钉住的 SPKI 摘要校验，主机名由**逐连接**的 verifier 处理
+  （证书没有 LAN SAN，也绝不 `setDefaultHostnameVerifier`）。
+- 界面上是「与电脑配对」和「已配对的电脑」（后者可忘记电脑，指向它的账户显示「还没有与这台
+  电脑配对」，并可在账户列表长按该账户走「重新配对」原地换回令牌、保留历史与 Widget 绑定）。
+  「重新配对」的可恢复性目前**只成立到一半**：2026-10-03 的设备验收里它已经能进界面、读到证书、
+  原地保住同一个账户（不新增），但修复后那次刷新没有带回成功快照（`successful snapshots 0 -> 0`），
+  这一条在 `assert-bridge-pair.ps1` 里是红的，不算已交付。
+- 模拟器专属：`127.0.0.1 / localhost / ::1` 在**拼 URL 时**就被改写成 `10.0.2.2`，也就是
+  在建连之前（`PairingClient` 的探测与兑换走同一个 `addresses.baseUrl(...)`，两条路径不会
+  指向不同机器）；改写只换拨出的地址，不换钉住的摘要——指纹仍然来自那台机器出示的证书。
+
 ## 构建
 
 项目使用 Gradle（AGP 9.0.1 / Gradle 9.1.0，JDK 17）。生产代码零第三方依赖；
@@ -115,7 +148,7 @@ Bridge 侧另有**第二套门禁**（Go，独立于 Gradle）：
 
 ```powershell
 cd bridge
-gofmt -l ./cmd ./internal; go vet ./...; go test ./...   # 66 个 PASS（含子测试）
+gofmt -l ./cmd ./internal; go vet ./...; go test ./...   # 109 个 PASS、2 个 SKIP（含子测试）
 ```
 
 ### 环境

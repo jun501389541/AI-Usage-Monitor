@@ -57,6 +57,9 @@ public final class AccountEditActivity extends Activity {
     /** The account being edited, or absent when adding one. */
     public static final String EXTRA_ACCOUNT_ID = "com.aiusage.monitor.extra.ACCOUNT_ID";
 
+    /** A pairing started from this form; its result is an account that already exists. */
+    private static final int REQUEST_PAIR = 41;
+
     private AppGraph graph;
     private AccountManager accountManager;
     private UsageRepository usageRepository;
@@ -245,6 +248,30 @@ public final class AccountEditActivity extends Activity {
         bridgeCard = UiKit.card(this);
         bridgeCard.addView(label("电脑端 Bridge"), UiKit.matchWrap(this, 0));
 
+        // Phase 7's recommended path. Pairing is what makes the address safe to type
+        // at all: it pins the certificate, keeps the address in one row that can be
+        // edited when the laptop moves networks, and stores the device token in the
+        // same encrypted credential this form already writes.
+        TextView pairButton = UiKit.actionButton(this, "与电脑配对（推荐）", true);
+        pairButton.setContentDescription("与电脑配对");
+        pairButton.setOnClickListener(view -> {
+            android.content.Intent pairing = new android.content.Intent(this,
+                    com.aiusage.monitor.ui.pair.PairActivity.class);
+            // On an account that already exists this is 「重新配对」: the token on the
+            // computer was revoked, and what has to survive is this account - its
+            // history and its widget slots. Without the id the pairing screen would add
+            // a second account for the same computer and leave this one reading
+            // 「还没有与这台电脑配对」 forever.
+            if (account != null) {
+                pairing.putExtra(com.aiusage.monitor.ui.pair.PairActivity.EXTRA_ACCOUNT_ID,
+                        account.getId());
+            }
+            startActivityForResult(pairing, REQUEST_PAIR);
+        });
+        bridgeCard.addView(pairButton, UiKit.matchHeight(this, 50, 10));
+
+        bridgeCard.addView(label("或直接手输地址（调试通道）"), UiKit.matchWrap(this, 12));
+
         bridgeUrlInput = new EditText(this);
         bridgeUrlInput.setSingleLine(true);
         bridgeUrlInput.setTextSize(15);
@@ -259,7 +286,7 @@ public final class AccountEditActivity extends Activity {
         bridgeCard.addView(bridgeUrlInput, UiKit.matchWrap(this, 10));
 
         TextView urlHint = UiKit.text(this,
-                "手机上的模拟器用 10.0.2.2 访问电脑本机；Bridge 只监听 127.0.0.1。",
+                "手机上的模拟器用 10.0.2.2 访问电脑本机。调试通道不钉证书：地址与令牌照明文发出去，只适合回环或模拟器网段。",
                 11, UiKit.COLOR_HINT, Typeface.NORMAL);
         urlHint.setLineSpacing(UiKit.dp(this, 2), 1.15f);
         bridgeCard.addView(urlHint, UiKit.matchWrap(this, 8));
@@ -523,8 +550,7 @@ public final class AccountEditActivity extends Activity {
         finish();
     }
 
-    private void confirmDelete() {
-        new AlertDialog.Builder(this)
+    private void confirmDelete() {        new AlertDialog.Builder(this)
                 .setTitle("删除账户")
                 .setMessage("将删除「" + account.getDisplayName() + "」及其余额历史。此操作无法撤销。")
                 .setPositiveButton("删除", (dialog, which) -> {
@@ -539,5 +565,26 @@ public final class AccountEditActivity extends Activity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    /**
+     * A pairing that worked has already written its account, so this form has nothing
+     * left to save: it closes, and the list reloads what the pairing created. Staying
+     * here with a half-filled form would invite saving a *second* account for the same
+     * computer.
+     */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_PAIR || resultCode != RESULT_OK || data == null) {
+            return;
+        }
+        if (data.getStringExtra(com.aiusage.monitor.ui.pair.PairActivity.EXTRA_ACCOUNT_ID)
+                == null) {
+            return;
+        }
+        new WidgetUpdateManager(this).updateAllWidgets();
+        Toast.makeText(this, "已配对，账户已添加", Toast.LENGTH_SHORT).show();
+        finish();
     }
 }

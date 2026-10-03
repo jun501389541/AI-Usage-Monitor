@@ -48,6 +48,33 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <!--
+            Phase 7: the pairing screen. Exported because the second channel is a
+            link the system delivers - the computer's terminal prints
+            aiusage://pair#… and tapping it must open this screen. It takes no
+            permission and shows no account data: an offer the user did not choose
+            to open still only pairs a computer after a person confirms the
+            fingerprint on this screen (docs/PHASE-7-PLAN.md A11).
+        -->
+        <activity
+            android:name="com.aiusage.monitor.ui.pair.PairActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:label="与电脑配对">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aiusage" android:host="pair" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name="com.aiusage.monitor.ui.bridge.BridgeListActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:label="已配对的电脑" />
+        <!--
             Configured by the launcher while a widget is placed, so it must be
             exported and reachable from outside the app. It always returns
             RESULT_CANCELED unless the user picks an account.

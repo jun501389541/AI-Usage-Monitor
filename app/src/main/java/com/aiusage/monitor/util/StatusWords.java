@@ -50,6 +50,11 @@ public final class StatusWords {
                 return "Bridge 未连接" + suffix;
             case BRIDGE_AUTH_REQUIRED:
                 return "电脑端授权已失效" + suffix;
+            case BRIDGE_PAIRING_REQUIRED:
+                // No "重新" here: this state means there is no pairing to redo, which
+                // is a different instruction than the one above, and the two must not
+                // collapse into the same sentence (Spec §53 rule 19).
+                return "尚未与这台电脑配对";
             case REFRESHING:
                 return "正在刷新" + suffix;
             case NO_DATA:

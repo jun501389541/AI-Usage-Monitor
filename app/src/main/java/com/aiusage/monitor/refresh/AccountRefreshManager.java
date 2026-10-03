@@ -43,13 +43,28 @@ public final class AccountRefreshManager {
     private final AccountManager accountManager;
     private final UsageRepository usageRepository;
     private final ProviderRegistry registry;
+    /**
+     * The paired computers, or null in builds that have no pairing storage. An
+     * account carrying a {@code bridge_id} in such a build is a wiring mistake, and
+     * {@link #resolveBridge} says so rather than dialling the older address that
+     * happens to be in its credential.
+     */
+    private final com.aiusage.monitor.bridge.BridgeRepository bridges;
 
     public AccountRefreshManager(AccountManager accountManager,
                                  UsageRepository usageRepository,
                                  ProviderRegistry registry) {
+        this(accountManager, usageRepository, registry, null);
+    }
+
+    public AccountRefreshManager(AccountManager accountManager,
+                                 UsageRepository usageRepository,
+                                 ProviderRegistry registry,
+                                 com.aiusage.monitor.bridge.BridgeRepository bridges) {
         this.accountManager = accountManager;
         this.usageRepository = usageRepository;
         this.registry = registry;
+        this.bridges = bridges;
     }
 
     /** The outcome of one refresh attempt. */
@@ -228,6 +243,43 @@ public final class AccountRefreshManager {
     private RefreshOutcome fetch(Account account, AuthContext authContext, long generation) {
         String accountId = account.getId();
 
+        // A paired account is read through its computer's row, not through the address
+        // that happens to be stored beside its token: the row is what 「the laptop
+        // changed networks」 edits, and the digest inside it is what the connection has
+        // to be pinned to (A5/A9). An account with no bridge_id is the hand-typed
+        // debug path and keeps Phase 6's behaviour exactly.
+        String bridgeId = account.getBridgeId();
+        com.aiusage.monitor.model.Bridge bridge = null;
+        if (bridgeId != null && !bridgeId.isEmpty()) {
+            if (bridges == null) {
+                synchronized (accountManager.writeMonitor()) {
+                    if (isVoid(accountId, generation)) {
+                        return RefreshOutcome.abandoned(accountId);
+                    }
+                    return recordFailure(accountId, account.getAuthType(),
+                            UsageError.BRIDGE_PAIRING_REQUIRED,
+                            "这个账户指向一台已配对的电脑，但本机没有配对的存储");
+                }
+            }
+            bridge = bridges.findById(bridgeId);
+            if (bridge == null) {
+                // The row is gone: the computer was deleted on this phone, or the
+                // pairing never finished. This is not "电脑离线" — no address is even
+                // known — and it is not "授权失效" either, because nothing was sent.
+                synchronized (accountManager.writeMonitor()) {
+                    if (isVoid(accountId, generation)) {
+                        return RefreshOutcome.abandoned(accountId);
+                    }
+                    return recordFailure(accountId, account.getAuthType(),
+                            UsageError.BRIDGE_PAIRING_REQUIRED, null);
+                }
+            }
+            java.util.Map<String, String> values = new java.util.HashMap<>();
+            values.put(AuthContext.KEY_DEVICE_TOKEN, authContext.get(AuthContext.KEY_DEVICE_TOKEN));
+            values.put(AuthContext.KEY_BRIDGE_URL, bridge.getBaseUrl());
+            values.put(AuthContext.KEY_BRIDGE_PIN, bridge.getFingerprint());
+            authContext = AuthContext.of(account.getAuthType(), values);
+        }
         UsageProvider provider;
         try {
             provider = registry.require(account.getProviderId());
@@ -268,6 +320,14 @@ public final class AccountRefreshManager {
                         .providerId(account.getProviderId())
                         .updatedAt(System.currentTimeMillis())
                         .build();
+
+                if (bridge != null) {
+                    // The row's last_seen is what the device screen shows as "上次联系
+                    // 时间", and it is only honest if it moves when a read through that
+                    // computer actually succeeded — inside this monitor, so a delete
+                    // landing now cannot be stamped afterwards.
+                    bridges.touchLastSeen(bridge.getId(), stamped.getUpdatedAt());
+                }
 
                 // Daily usage is derived from the balance reading, per account.
                 if (stamped.getBalance() != null && !stamped.getBalance().getRawText().isEmpty()) {
@@ -488,6 +548,12 @@ public final class AccountRefreshManager {
                 // Its own status: the wording for AUTH_REQUIRED says "API Key",
                 // which is not what a Bridge account has.
                 return UsageStatus.BRIDGE_AUTH_REQUIRED;
+            case BRIDGE_PAIRING_REQUIRED:
+                // Not folded into the two above. "电脑离线" sends the user to check a
+                // cable, "授权已失效" sends them to re-pair a pairing they never made;
+                // this state needs its own sentence, and the switch's default would
+                // have quietly answered with "网络连接失败" instead (Spec §53 rule 19).
+                return UsageStatus.BRIDGE_PAIRING_REQUIRED;
             default:
                 return UsageStatus.NETWORK_ERROR;
         }

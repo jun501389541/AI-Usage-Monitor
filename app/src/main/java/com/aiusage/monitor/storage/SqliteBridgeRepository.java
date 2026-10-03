@@ -67,8 +67,17 @@ public final class SqliteBridgeRepository implements BridgeRepository {
         values.put("fingerprint", bridge.getFingerprint());
         values.put("added_at", bridge.getAddedAt());
         values.put("last_seen", bridge.getLastSeen());
-        database.getWritableDatabase().insertWithOnConflict(Database.TABLE_BRIDGES, null, values,
+        long written = database.getWritableDatabase().insertWithOnConflict(
+                Database.TABLE_BRIDGES, null, values,
                 android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+        // -1 is SQLite's own "nothing was written", and it arrives without an
+        // exception: discarding it made a pairing look recorded while the computer was
+        // never in the table, which is the state PairingStore exists to avoid (review
+        // P2, 2026-10-03). Throwing here is what hands that failure to the rollback.
+        if (written < 0) {
+            throw new IllegalStateException("the bridges table refused the row for "
+                    + bridge.getId());
+        }
     }
 
     @Override

@@ -93,6 +93,7 @@ Number of camera devices: 1                  <- 摄像头不是瓶颈，解码�
 | A8 | **指纹校验在 App 侧用自定义 `X509TrustManager`：只接受链上叶子证书 SPKI 摘要等于配对时钉住的指纹，其余一律拒绝** | 框架能力（`javax.net.ssl`），零依赖。不做「trust all + 手工比字符串」那种常见写法：那会让主机名与证书都失去意义。代价：单靠它还不能连 LAN 地址——见 A10。 |
 | A9 | **`bridges` 表（v3）保存配对结果；配对账户的 `accounts.bridge_id` 指向它，`CredentialPayload` 里不再重复地址** | 还 Phase 6 A3 的债；地址变化时改一行 `bridges.base_url`，不动每个账户。代价：需要迁移，且要兼容已经存在的「手输地址」账户（它们的 payload 里有 URL，`bridge_id` 为空 = 调试通道，行为不变） |
 | A10 | **主机名校验策略（Phase 7 复审 P1）：配对用的每个 `HttpsURLConnection` 实例各自 `setHostnameVerifier(PinnedHostnameVerifier(fingerprint))`；该 verifier 只回答一句「这条连接呈现的叶子证书，其 SPKI 摘要是否等于这台 Bridge 配对时保存的指纹」，等于才 true。禁止 `HttpsURLConnection.setDefaultHostnameVerifier(...)`，禁止无条件 `return true`，禁止把 verifier 复用到非配对连接** | 为什么不能「就用默认校验」：证书没有 LAN SAN（§0.1 实测），默认 verifier 会在握手后拒绝 `https://<LAN-IP>`，配对在真机上必然失败。为什么不能全局放开：`setDefaultHostnameVerifier` 是进程级，会把 DeepSeek 与一切其它 HTTPS 请求的证书校验同时关掉，等于用「配对」这一个功能买断了全 App 的 MITM 防线。代价：每个建连点都要显式装配（漏装=用默认=连不上 LAN，属可测的响亮失败）；`PinnedHostnameVerifierTest`（§5.2）与 P-2（§5.3）把「漏装 / 全局装 / 先请求再判」三种写法都变成会红的断言。 |
+| A11 | **手输「地址 + 8 位短码」这条通道怎么建立信任：首次信任 + 人工核对指纹尾段**（2026-10-03 步骤 6-8 动工前由用户拍板）。客户端先向该地址发一次不带任何凭据的 TLS 探测，取回服务器证书的 SPKI 摘要，屏幕上只打尾 8 位，与电脑终端同一行打印的尾段由人眼比对；调用方必须把「用户确认过」与「确认的那枚完整摘要」一起交回来，短码才会发出，而发出用的那条连接的 trust manager 与 verifier 都按这枚摘要装配 | 为什么单独立一条：三条通道里只有这条不携带指纹（没人会读 64 个十六进制字符），而 A8/A10 要求配对连接必须钉指纹——不钉就是把一次性短码发给路径上任何一台机器。为什么不选「配对完成后再补核对」：那让首次配对成为唯一没有人工在场的时刻，而此刻手机与电脑恰在同一网段，是 MITM 成本最低的一刻。残余风险登记为 R10：人工核对是否发生，脚本无法证明，所以 P-3 断言的是「没有确认就一定不发」这一侧。代价：这条通道比粘贴 payload 多两步（探测、核对），且探测本身是一次不验证书的握手——它只读 `/v1/health`、结构上无法带 header 或 body（`BridgeTls.openProbe` 的签名就是这条边界，`PairingWiringTest` 钉住它） |
 
 ---
 
@@ -241,6 +242,7 @@ Number of camera devices: 1                  <- 摄像头不是瓶颈，解码�
 | R7 | 明文调试通道（回环 + 无令牌）继续存在，可能被误用为真机方案 | 只放行 `10.0.2.2`/`localhost`（现状）；配对账户必须 TLS + 令牌；UI 上「调试」标签明示 |
 | R8 | 为让 LAN 地址连上而写 `setDefaultHostnameVerifier { true }`（Android 上最常见的「修法」）——一句全局放开就把 DeepSeek 与所有其它 HTTPS 请求的证书校验一起废掉 | A10 定成逐连接 verifier；`PinnedHostnameVerifierTest` 里源码 pin「`setDefaultHostnameVerifier` 出现 0 次」；P-2 用服务器侧请求计数证明拒绝发生在发出请求之前 |
 | R9 | 配对 payload 里的地址与 Bridge 实际监听的地址脱钩（回环绑定却把 LAN 地址交给手机），以及终端建议的 `--add-device` 缺 `--data-dir`/`--host` 而连到别的实例 | §0.1 的「offer 由绑定推导」+ P-11 的四配置启动验收；地址不在该绑定能答应的集合里就拒绝启动，而不是发一个手机连不上的码 |
+| R10 | 短码通道的人工核对可能被跳过：屏幕上「这枚指纹和电脑终端上的一样吗」渲染得再清楚，脚本也无法证明有一个人真的比对了（A11 的另一半） | 能机器检的半边全机器检：`PairingClient.exchangeManual` 在没有 `userConfirmed` 时**不发**请求（`PairingClientTest#theTypedCodeStaysHomeUntilAHumanConfirmsTheDigest` 断言的是请求数为 0，不是文案），且发出去那条连接钉的就是被确认的摘要（`#theCodeOnlyGoesToTheDigestThatWasShown`）；P-3 在设备侧断言「未确认时服务器端没有收到任何 `/v1/pair`」。剩下的「人有没有看」只能靠界面把它做成必经一步，这一条不假装已被验收覆盖 |
 
 ---
 
@@ -290,6 +292,42 @@ health 指纹 == offer 指纹   True，tls=True
 1. 脚本自身两个缺陷（提交 `2d10035`）：一条 UI 步骤失败时，`Check` 的 `[bool]` 参数收到「日志行 + 值」的数组而抛异常，整轮在 C1 就中断（第一次重跑：57 项里 32 红，全是那一条的下游）；改成 `Write-Host` 记日志后，失败被逐条计出，才看得见根因。
 2. 环境事实：模拟器的软键盘开始吞掉注入按键——`input text probe` 打到普通文本框一个字不进（逐字符 + 200ms 也只进 'p'），同屏密码框 14 个字符全进。修法是在整轮开始前 `ime disable` 当前软键盘、清理时还原，并且只在 `mDecorViewVisible=true` 时才发 KEYCODE_BACK。金丝雀「injected text reaches a plain-text field」在修好后的第一轮 **PASS**（`tools/smoke/out/regress-phone3.log`），紧接着模拟器自己挂了（emulator 日志 `detected a hanging thread 'QEMU2 CPU0 thread'`，重启后长时间不注册设备），所以 C 系列要等一台活设备重跑。
 
-### 未开始：手机半边（步骤 5-10）
+### 已交付：手机半边第一批（步骤 5-8，2026-10-03）
 
-一处与计划不同的做法需要先记下：schema v3 的迁移**不能**只在 JVM 里测——`android.database.sqlite` 在宿主 JVM 是桩，所以 v2→v3 的验证沿用 Phase 3 已建立的办法：在真机/模拟器上把设备库降级→升级回来，逐表比对（`assert-widget-slots.ps1` 里那套可逆彩排），并照例先备份后恢复、绝不写真 Key、绝不删两个真实 DeepSeek 账户。步骤 5-9 的 Java 侧目前一行未写，`Account.bridgeId` 也还缺一个 setter（模型与列都在，`AccountManager` 没有入口）。
+| 步 | 提交 | 内容 | 门禁与实测 |
+| --- | --- | --- | --- |
+| 5 | `597ebaa` | `Database` v3 + `bridges` 表（单事务迁移，无 `INSERT`）、`model/Bridge`、`BridgeRepository` + `SqliteBridgeRepository`、`AccountManager.attachBridge/bridgeIdOf` | 设备侧**可逆**彩排 `assert-bridge-migration.ps1`：18 断言 0 失败（备份真库→降到 v2→升回 v3→逐表比对→字节级还原） |
+| 6 | 步骤 6-8 提交 | `PairingPayload`（`aiusage://pair#<base64url(json)>`：未知键、缺字段、版本不符、形状不符全部拒绝，并按字段名报错）、`Base64Url`（minSdk 23 用不了 `java.util.Base64`，手写并钉边界）、`PairingPayloadSource` 三通道：`TextOfferSource`（深链 / 粘贴共用「字符串进」这一条）、`ManualSource`（地址 + 短码） | 19 条单测（`PairingPayloadTest` 12 + `Base64UrlTest` 7），含**用 Go 真产出的 payload** 做向量（`GoVectors`）：两语言同一份格式各写一遍，正是漂移的来源 |
+| 7 | 同上 | `FingerprintPin`（SPKI SHA-256）、`PinnedTrustManager`、`PinnedHostnameVerifier`（A10）、`BridgeTls`（唯一的建连出口：钉证 + 逐连接 verifier 一起装；探针通道的两件 accept-any 是**命名类**，`PairingWiringTest` 数得出每一个装配点） | 12 条单测（`TlsPinningTest` 7 + `PairingWiringTest` 5）：Android 算出的摘要 == Go 播报的摘要；错指纹的 Go 真证书被拒 |
+| 8 | 同上 | `PairingClient`（hosts 按序试连；401 / 503 / 握手失败 / 应答缺 token 四类文案互不混用；A11 的确认门在**客户端**而不是界面）、`PinnedPairingTransport`、`AddressResolver` + `DeviceProfile`（只有模拟器把回环改写成 `10.0.2.2`，两条路径钉同一枚摘要） | 18 条单测（`PairingClientTest` 11 + `AddressResolverTest` 7）；`onlyTheEmulatorDialsTheLoopbackAddressSomewhereElse` 同时钉住「真机不改写 / 模拟器改写 / 两边都还钉指纹」 |
+
+与计划不同的两处命名（协议与测试不受影响）：包名用 `bridge/` 而不是 §3.2 写的 `pairing/`（和步骤 5 的 `BridgeRepository`、`model/Bridge` 同一侧，不给同一个概念两个包）；`PasteSource`/`DeepLinkSource` 合成了一个 `TextOfferSource`（两者都只是「字符串进」，差别只有标签，而标签是界面要显示的）。
+
+顺手修掉的事实错误与跨语言缺口：
+
+- `pairing.codeAlphabet` 的注释写着排除 `2/z`，实际只排了数字 `2`（`z` 在表内）。Android 侧照抄的那句会告诉用户「你输入的 `z` 不合法」，而那正是电脑刚发出来的码。两处注释与界面文案现在都写「不含 0、1、2 和 o、l、i」。
+- Go 的 `net.IP.String()` 会给出裸 IPv6（`::1`、`2001:db8::1`），而 Android 的 `requireHosts` 见 `:` 就拒、`baseUrlFor` 也不加中括号：**只要有一台机器把 IPv6 报进 offer，这枚配对码在手机端就是废的**。现在按「两个以上冒号 = IPv6 字面量」区分裸地址与 `host:port`，建 URL 时补中括号；手输框仍然拒绝把端口写进地址（那是另一个输入框的内容），并拒绝中括号未闭合的半成品。
+
+变异测试跑了五轮、共 **44 条**，最终全部命中；过程中 **7 条逃过**，每一条都变成了一条新的会红断言而不是被忽略：第一轮 34 条里 6 条无人发现，全部是「断言只要求出错、不要求原因」那一类（空的 `hosts` 列表、`BridgeTls` 的空指纹门——它其实被内层 `PinnedTrustManager` 兜住，断言只写「报了指纹错」就等于没钉这一层；短码的长度规则与字符表规则互相掩盖；base64url 的两条边界），改成指名原因的断言并各自留一个只违反一条规则的用例后才收口；第二轮新增的 IPv6 相关里又逃过 1 条（中括号未闭合）。找缺口过程中改出的**两个真缺陷**：手输通道探测走**解析后**的地址、发码却走**解析前**的（模拟器上会把码发给手机自己，而用户核对的是另一台机器的指纹），现在两条同用一个 `addresses.baseUrl(...)`，并由 `theManualChannelProbesAndExchangesThroughTheSameAddress` 钉住；以及假传输（`FakeTransport`）原本只记「答了的」请求，于是「两条地址都试过了」这条断言永远只能看到第二条——改成进入 `post()` 就记账、再决定抛不抛，试连顺序才是可断言的东西。同一类问题在 `assertFailure` 上又出现一次：它进 case 前把调用方刚设的 `handshakeFails` 清掉了，于是「握手失败要说指纹不符」实际测的是上一条 case 留下的应答。
+
+门禁（步骤 6-8 之后复跑，数字取自报告而不是控制台）：Android `SUITES=46 TESTS=487 FAILURES=0 ERRORS=0 SKIPPED=0`（步骤 5 之前 40/438；新增 6 个测试类共 49 条，逐类见 §10 上表）；`assembleDebug` 出包 `app/build/outputs/apk/debug/app-debug.apk`；lint **0 error / 35 warning**，其中 5 条落在 `bridge/`（`BadHostnameVerifier`×1、`TrustAllX509TrustManager`×2、`CustomX509TrustManager`×2）——全部指向刻意为之的探针通道与钉证 TrustManager，按本项目对 `UnusedAttribute` 的同一立场**不压制**（另 1 条 `AndroidGradlePluginVersion` 因 `--offline` 拿不到版本探测而缺席，基线 31→30 的来源就是它）。Go 门禁 `gofmt -l` 空、`go vet` 干净、`go test -count=1 ./...` **109 PASS / 0 失败 / 2 跳过**（与步骤 4 复审后同数，本轮未动 Go 逻辑，只改了那条注释）。
+
+### 已交付：配对落库、按配对读取、配对界面（步骤 9，2026-10-03）
+
+| 内容 | 提交 | 谁能把它测红 |
+| --- | --- | --- |
+| `PairingStore`：配对结果写成 `bridges` 行 + `BRIDGE_TOKEN` 账户 + `accounts.bridge_id`；同一 Bridge ID 换指纹直接拒绝、重配保留首次配对时间、写凭据失败则回滚本次调用创建的东西 | 步骤 9 提交 | `PairingStoreTest` 10 条；8 次变异全命中（`tools/smoke/out/mutate-store2-report.txt`），其中两条专门钉「只回滚自己创建的」与「失败时一行都不留」这两个相反方向 |
+| 读侧按行解析：`AccountRefreshManager` 用 `bridge_id` 取行，用行里的 `base_url` 与 `fingerprint` 重建 `AuthContext`；行没了落 `BRIDGE_PAIRING_REQUIRED` 且**一次请求都不发**；读成功在同一个监视器里 stamp `last_seen` | 同上 | `PairedAccountReadsThroughItsComputerTest` 6 条；6 次变异全命中（`mutate-reader-report.txt`），含「地址仍从凭据里取」「digest 没传给 provider」「没有存储时静默放行」 |
+| `BridgeCodexDataSource.chooseTransport`：有指纹只走钉指纹的 HTTPS 通道；HTTPS 但没指纹、或指纹配 `http://` 都拒绝；全空白指纹按「没有指纹」处理（拒绝而不是抛未检查异常） | 同上 | `BridgeCodexDataSourceTest` 新增 5 条 + `PinnedReadTransportTest` 4 条；5 次变异全命中（`mutate-reader2-report.txt`） |
+| 配对页（粘贴 / 深链 / 手输地址 + 短码 + 尾号人工核对）、设备页（列电脑、看尾号与上次联系、忘记）、账户编辑页的「配对（推荐）/手输（调试）」两条路径、`aiusage://pair` intent-filter | 同上 | 界面本身**没有设备证据**（见下）；能机器检的那半边是 `PairingWiringTest#thePairingScreenCannotSendTheCodeWithoutTheConfirmation`：屏幕那条 `exchangeManual(...)` 只能由勾选框之后的按钮触发，且复选框初始为 false |
+
+本轮门禁（复跑）：Android `SUITES=49 TESTS=512 FAILURES=0 ERRORS=0 SKIPPED=0`（步骤 6-8 之后是 46/487；本轮新增 25 条：`PairingStoreTest` 10、`PairedAccountReadsThroughItsComputerTest` 6、`PinnedReadTransportTest` 4、`BridgeCodexDataSourceTest` +5，`PairingWiringTest` +1）；`assembleDebug` 出包；lint **0 error / 40 warning**，较步骤 8 后 +5，全部与既有界面同族（`LockedOrientationActivity`×2 = 两个新 Activity 沿用全应用的竖屏约束、`DiscouragedApi`×2、`SetTextI18n`×1），步骤 6-8 那 5 条钉证/探针相关的仍按同一立场**不压制**；Go 门禁未动，仍 `109 PASS / 0 失败 / 2 跳过`。
+
+变异两轮共 **67 条，全部命中**：步骤 6-8 的 52 条（含 `PairingStore` 的 8 条）在步骤 9 改完 `BridgeTls`/`PairingPayload` 之后**整轮重跑**一遍，`tools/smoke/out/mp-final-report.txt`；步骤 9 自己的 15 条（reader 5、transport 选择 5、钉指纹读 3、配对界面 2）在 `mr-final-report.txt`。界面那 2 条命中的是 `thePairingScreenCannotSendTheCodeWithoutTheConfirmation`——它不是「界面长对了」的截图断言，而是「屏幕这条发送路径的守卫被拆掉就会红」的源码断言；界面本身的行为仍要等设备验收（见下）。
+
+**还没有做的两件事**，不要在读这份记录时误以为已完成：
+
+1. **步骤 9 的界面没有任何设备证据**：本轮没有跑 `assert-bridge-pair.ps1`（脚本本身也还没写，见步骤 10），也没有安装到模拟器截图。所以「配对页能用」目前是编译与逻辑层面的断言，不是观察到的行为。
+2. **A9 的重复地址仍在**：配对账户的读已经不看凭据里的 `bridgeUrl`，但那个字段还在写入（Phase 6 的手输账户靠它）。清掉它要一次凭据重写迁移，登记为遗留。
+
+一处与计划不同的做法需要先记下：schema v3 的迁移**不能**只在 JVM 里测——`android.database.sqlite` 在宿主 JVM 是桩，所以 v2→v3 的验证沿用 Phase 3 已建立的办法：在真机/模拟器上把设备库降级→升级回来，逐表比对（`assert-bridge-migration.ps1` 已按这套跑过 18 断言），并照例先备份后恢复、绝不写真 Key、绝不删两个真实 DeepSeek 账户。

@@ -92,7 +92,7 @@ public class BridgeCodexDataSourceTest {
         FakeTransport transport = new FakeTransport();
         final BridgeCodexDataSource source = new BridgeCodexDataSource(transport);
 
-        runQuietly(() -> source.fetch("http://10.0.2.2:38411/", "tok-abc", "acct-9", 5L));
+        runQuietly(() -> source.fetch("http://10.0.2.2:38411/", "tok-abc", "", "acct-9", 5L));
 
         assertEquals(1, transport.calls);
         assertEquals("http://10.0.2.2:38411/v1/accounts/codex/usage",
@@ -112,7 +112,7 @@ public class BridgeCodexDataSourceTest {
 
         UsageResult result = null;
         try {
-            result = source.fetch("http://127.0.0.1:38411", "", "a", 1L);
+            result = source.fetch("http://127.0.0.1:38411", "", "", "a", 1L);
         } catch (UsageException exception) {
             fail("unexpected failure: " + exception.getMessage());
         }
@@ -132,7 +132,7 @@ public class BridgeCodexDataSourceTest {
 
             final int status = code;
             assertEquals("HTTP " + code, UsageError.BRIDGE_UNAUTHORIZED,
-                    errorOf(() -> source.fetch("http://h:1", "t", "a", status == 401 ? 1L : 2L)));
+                    errorOf(() -> source.fetch("http://h:1", "t", "", "a", status == 401 ? 1L : 2L)));
         }
     }
 
@@ -159,7 +159,7 @@ public class BridgeCodexDataSourceTest {
         final BridgeCodexDataSource source = new BridgeCodexDataSource(transport);
 
         assertEquals(UsageError.BRIDGE_UNAUTHORIZED,
-                errorOf(() -> source.fetch("http://h:1", "t", "a", 1L)));
+                errorOf(() -> source.fetch("http://h:1", "t", "", "a", 1L)));
     }
 
     /** A 503 whose body cannot be read is still "the Bridge answered", not "no route". */
@@ -169,7 +169,7 @@ public class BridgeCodexDataSourceTest {
         transport.response = response(503, "gateway said no");
         final BridgeCodexDataSource source = new BridgeCodexDataSource(transport);
 
-        assertEquals(UsageError.UNKNOWN, errorOf(() -> source.fetch("http://h:1", "t", "a", 1L)));
+        assertEquals(UsageError.UNKNOWN, errorOf(() -> source.fetch("http://h:1", "t", "", "a", 1L)));
     }
 
     @Test
@@ -180,7 +180,7 @@ public class BridgeCodexDataSourceTest {
 
         UsageException thrown = null;
         try {
-            source.fetch("http://10.0.2.2:38411", "t", "a", 1L);
+            source.fetch("http://10.0.2.2:38411", "t", "", "a", 1L);
             fail("expected UsageException");
         } catch (UsageException exception) {
             thrown = exception;
@@ -196,8 +196,8 @@ public class BridgeCodexDataSourceTest {
         final FakeTransport refused = new FakeTransport();
         refused.response = response(401, "{}");
 
-        UsageError a = errorOf(() -> new BridgeCodexDataSource(offline).fetch("http://h:1", "t", "a", 1L));
-        UsageError b = errorOf(() -> new BridgeCodexDataSource(refused).fetch("http://h:1", "t", "a", 1L));
+        UsageError a = errorOf(() -> new BridgeCodexDataSource(offline).fetch("http://h:1", "t", "", "a", 1L));
+        UsageError b = errorOf(() -> new BridgeCodexDataSource(refused).fetch("http://h:1", "t", "", "a", 1L));
 
         assertFalse("rule 19: these two must stay distinguishable", a == b);
     }
@@ -213,7 +213,7 @@ public class BridgeCodexDataSourceTest {
             final BridgeCodexDataSource source = new BridgeCodexDataSource(transport);
             final String value = base;
             assertEquals("for '" + base + "'", UsageError.UNSUPPORTED,
-                    errorOf(() -> source.fetch(value, "t", "a", 1L)));
+                    errorOf(() -> source.fetch(value, "t", "", "a", 1L)));
             assertEquals("network was reached for '" + base + "'", 0, transport.calls);
         }
     }
@@ -224,13 +224,90 @@ public class BridgeCodexDataSourceTest {
         transport.response = response(200, "<html>proxy intercepted us</html>");
         final BridgeCodexDataSource source = new BridgeCodexDataSource(transport);
 
-        assertEquals(UsageError.UNKNOWN, errorOf(() -> source.fetch("http://h:1", "t", "a", 1L)));
+        assertEquals(UsageError.UNKNOWN, errorOf(() -> source.fetch("http://h:1", "t", "", "a", 1L)));
     }
 
     /**
      * Spec §50 items 1-3: a credential must not ride along in message text, which
      * is what ends up in a log or on screen.
      */
+    // ------------------------------------------------- which transport speaks
+    //
+    // The address and the digest together decide whether a read may go out at all.
+    // Each case below exists because the wrong choice is invisible from the outcome:
+    // reading a paired computer through the plaintext transport, or through a
+    // transport that trusts any certificate, both "work" until somebody is listening.
+
+    private static final String DIGEST =
+            "94cfeca524d68047296c70d220f62aa205184ff6beac1e8936e30caaab8b1be0";
+
+    private static final class FakePinnedSource implements com.aiusage.monitor.util.PinnedTransportSource {
+        final List<String> askedFor = new ArrayList<>();
+        final FakeTransport answers = new FakeTransport();
+
+        @Override
+        public BridgeTransport forPin(String fingerprintHex) {
+            askedFor.add(fingerprintHex);
+            return answers;
+        }
+    }
+
+    @Test
+    public void anAccountWithADigestIsReadOnlyThroughTheTransportThatPinsIt() {
+        FakeTransport plain = new FakeTransport();
+        FakePinnedSource pinned = new FakePinnedSource();
+        final BridgeCodexDataSource source = new BridgeCodexDataSource(plain, pinned);
+
+        runQuietly(() -> source.fetch("https://192.168.1.42:38411", "tok", DIGEST, "a", 1L));
+
+        assertEquals("the digest decided the transport, and was passed unchanged",
+                java.util.Collections.singletonList(DIGEST), pinned.askedFor);
+        assertEquals("the plaintext-capable transport never ran", 0, plain.calls);
+        assertEquals("https://192.168.1.42:38411/v1/accounts/codex/usage",
+                pinned.answers.recorded.urls.get(0));
+    }
+
+    @Test
+    public void anHttpsAddressWithNoDigestIsRefusedRatherThanVerifiedAgainstTheSystem() {
+        // The tempting fallback is "just use the default trust store", which cannot
+        // ever work against a self-signed Bridge certificate and would be a
+        // man-in-the-middle hole if it did.
+        FakeTransport plain = new FakeTransport();
+        FakePinnedSource pinned = new FakePinnedSource();
+        final BridgeCodexDataSource source = new BridgeCodexDataSource(plain, pinned);
+
+        assertEquals(UsageError.BRIDGE_PAIRING_REQUIRED,
+                errorOf(() -> source.fetch("https://10.0.2.2:38411", "tok", "", "a", 1L)));
+        assertEquals(0, plain.calls);
+        assertEquals(0, pinned.askedFor.size());
+    }
+
+    @Test
+    public void aPairedComputerIsNeverDialledOverPlaintext() {
+        FakeTransport plain = new FakeTransport();
+        FakePinnedSource pinned = new FakePinnedSource();
+        final BridgeCodexDataSource source = new BridgeCodexDataSource(plain, pinned);
+
+        assertEquals(UsageError.BRIDGE_PAIRING_REQUIRED,
+                errorOf(() -> source.fetch("http://10.0.2.2:38411", "tok", DIGEST, "a", 1L)));
+        assertEquals("refusing is not the same as trying anyway", 0, plain.calls);
+        assertEquals(0, pinned.askedFor.size());
+    }
+
+    @Test
+    public void whitespaceWhereADigestShouldBeIsNoDigest() {
+        // A row whose fingerprint column is blank must not reach the point of building
+        // a pinned transport, where an unchecked IllegalArgumentException would surface
+        // as a crash rather than as the readable state it is.
+        FakeTransport plain = new FakeTransport();
+        FakePinnedSource pinned = new FakePinnedSource();
+        final BridgeCodexDataSource source = new BridgeCodexDataSource(plain, pinned);
+
+        assertEquals(UsageError.BRIDGE_PAIRING_REQUIRED,
+                errorOf(() -> source.fetch("https://10.0.2.2:38411", "tok", "   ", "a", 1L)));
+        assertEquals(0, pinned.askedFor.size());
+    }
+
     @Test
     public void failureMessagesNeverCarryTheToken() {
         FakeTransport refusedTransport = new FakeTransport();
@@ -245,7 +322,7 @@ public class BridgeCodexDataSourceTest {
                 new BridgeCodexDataSource[]{refused, offline}) {
             UsageException thrown = null;
             try {
-                source.fetch("http://10.0.2.2:38411", "SUPER-SECRET-TOKEN", "a", 1L);
+                source.fetch("http://10.0.2.2:38411", "SUPER-SECRET-TOKEN", "", "a", 1L);
                 fail("expected UsageException");
             } catch (UsageException exception) {
                 thrown = exception;

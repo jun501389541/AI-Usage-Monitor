@@ -34,22 +34,37 @@ public final class BridgeCodexDataSource {
     private static final int READ_TIMEOUT_MS = 12000;
 
     private final BridgeTransport transport;
+    private final com.aiusage.monitor.util.PinnedTransportSource pinned;
 
     public BridgeCodexDataSource(BridgeTransport transport) {
+        this(transport, new com.aiusage.monitor.bridge.BridgeTlsTransportSource());
+    }
+
+    /**
+     * @param pinned how to reach a computer whose certificate digest is known; a
+     *               build with no pairing storage passes an explicit source so this
+     *               class stays the only place that decides which transport speaks.
+     */
+    public BridgeCodexDataSource(BridgeTransport transport,
+                                 com.aiusage.monitor.util.PinnedTransportSource pinned) {
         this.transport = transport;
+        this.pinned = pinned;
     }
 
     /**
      * @param baseUrl     e.g. {@code http://10.0.2.2:38411}; no trailing slash needed
      * @param deviceToken the Temporary Token; empty means "send no header"
+     * @param pin         hex SHA-256 of the paired computer's public key, or empty
+     *                    for an account whose address was typed in by hand
      */
-    public UsageResult fetch(String baseUrl, String deviceToken, String accountId, long nowMs)
-            throws UsageException {
+    public UsageResult fetch(String baseUrl, String deviceToken, String pin, String accountId,
+                             long nowMs) throws UsageException {
         String url = buildUrl(baseUrl);
+        BridgeTransport chosen = chooseTransport(url, pin);
 
         Http.Response response;
         try {
-            response = send(url, deviceToken);
+            response = send(chosen, url, deviceToken);
         } catch (IOException exception) {
             // Nothing reached the Bridge, or it died mid-request. This is the
             // "computer offline" case, and the only one allowed to say it.
@@ -74,7 +89,36 @@ public final class BridgeCodexDataSource {
         throw new UsageException(UsageError.UNKNOWN, "电脑端返回 HTTP " + code);
     }
 
-    private Http.Response send(String url, String deviceToken) throws IOException {
+    /**
+     * Which transport speaks to this address, decided from the address and the digest
+     * and nothing else.
+     *
+     * <p>The two refusals are the point. A paired computer serves TLS with a self
+     * signed certificate whose subject is a random id, so reading it without the pin
+     * cannot succeed and the fallback people reach for — trust the platform, or trust
+     * anything — is the hole pairing was added to close; saying so is both true and
+     * actionable. And a digest paired with a plaintext address means the row and the
+     * account disagree, which is a corrupted record rather than a network problem.
+     */
+    private BridgeTransport chooseTransport(String url, String pin) throws UsageException {
+        boolean tls = url.startsWith("https://");
+        boolean hasPin = pin != null && !pin.trim().isEmpty();
+        if (hasPin) {
+            if (!tls) {
+                throw new UsageException(UsageError.BRIDGE_PAIRING_REQUIRED,
+                        "这台电脑是配对来的，只能用 HTTPS 读取，但账户里记的地址不是：" + url);
+            }
+            return pinned.forPin(pin.trim());
+        }
+        if (tls) {
+            throw new UsageException(UsageError.BRIDGE_PAIRING_REQUIRED,
+                    "这个地址要求 HTTPS，但账户没有可钉的证书指纹，请先与这台电脑配对");
+        }
+        return transport;
+    }
+
+    private Http.Response send(BridgeTransport transport, String url, String deviceToken)
+            throws IOException {
         if (deviceToken == null || deviceToken.trim().isEmpty()) {
             // The Phase 5 Bridge authenticates nothing (it binds loopback only), so
             // an empty token means "no header" rather than an empty Bearer value -

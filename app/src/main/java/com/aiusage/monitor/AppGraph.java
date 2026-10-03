@@ -69,9 +69,15 @@ public final class AppGraph {
         CredentialStore credentials = new SqliteCredentialStore(appContext);
         this.accountManager = new AccountManager(accounts, credentials);
         this.usageRepository = new SqliteUsageRepository(appContext);
-        this.refreshManager = new AccountRefreshManager(accountManager, usageRepository, registry);
-        this.widgetConfigStore = new SqliteWidgetConfigStore(appContext);
         this.bridgeRepository = new SqliteBridgeRepository(appContext);
+        // The bridge repository goes into the refresh path because a paired account
+        // is read *through* its computer's row: the address a laptop has now, and the
+        // digest its certificate must match, are both facts about the computer rather
+        // than about the account (docs/PHASE-7-PLAN.md A5/A9). Built before
+        // refreshManager for that reason.
+        this.refreshManager = new AccountRefreshManager(
+                accountManager, usageRepository, registry, bridgeRepository);
+        this.widgetConfigStore = new SqliteWidgetConfigStore(appContext);
         this.settings = new AppSettings(appContext);
         this.legacyMigration = new LegacyMigration(appContext, accountManager, Database.get(appContext));
     }
@@ -111,12 +117,42 @@ public final class AppGraph {
     }
 
     /**
-     * The paired computers. Step 5 of Phase 7 adds the storage; the pairing
-     * client that writes it and the reader that resolves an account through it are
-     * steps 6-8, which is why nothing queries this yet.
+     * The paired computers: what the reader resolves an account through, and what
+     * {@link #pairingStore()} writes. Phase 7 steps 5 and 9.
      */
     public BridgeRepository bridgeRepository() {
         return bridgeRepository;
+    }
+
+    /**
+     * Records a finished pairing: the computer's row plus the account that reads
+     * through it. Phase 7 step 9.
+     *
+     * <p>Built per call rather than held: it is two references to objects this class
+     * already owns, and the only callers are pairing screens, which are not on a
+     * refresh path.
+     */
+    public com.aiusage.monitor.bridge.PairingStore pairingStore() {
+        return new com.aiusage.monitor.bridge.PairingStore(bridgeRepository, accountManager);
+    }
+
+    /**
+     * The pairing client, wired to this device: TLS pinned to the offered digest, and
+     * the address rewriting of {@code DeviceProfile}. Phase 7 steps 6-8.
+     *
+     * <p>Built per call. It holds no state, and the screens that use it are the rarest
+     * thing in the app — a widget refresh must not carry one.
+     */
+    public com.aiusage.monitor.bridge.PairingClient pairingClient() {
+        return new com.aiusage.monitor.bridge.PairingClient(
+                new com.aiusage.monitor.bridge.PinnedPairingTransport(),
+                new com.aiusage.monitor.bridge.PairingClient.Clock() {
+                    @Override
+                    public long nowMs() {
+                        return System.currentTimeMillis();
+                    }
+                },
+                com.aiusage.monitor.bridge.DeviceProfile.addresses());
     }
 
     public AppSettings settings() {

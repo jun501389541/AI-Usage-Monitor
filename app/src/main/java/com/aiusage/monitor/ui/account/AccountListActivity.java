@@ -146,6 +146,15 @@ public final class AccountListActivity extends Activity {
         addButton.setContentDescription("添加账户");
         addButton.setOnClickListener(view -> openEditor(null));
         actions.addView(addButton, UiKit.matchHeight(this, 52, 12));
+
+        // Phase 7: the paired computers need their own screen because their state is
+        // per computer, not per account — one laptop can back several accounts, and
+        // forgetting it affects all of them at once.
+        TextView bridgesButton = UiKit.actionButton(this, "已配对的电脑", false);
+        bridgesButton.setContentDescription("已配对的电脑");
+        bridgesButton.setOnClickListener(view -> startActivity(new android.content.Intent(
+                this, com.aiusage.monitor.ui.bridge.BridgeListActivity.class)));
+        actions.addView(bridgesButton, UiKit.matchHeight(this, 50, 12));
         content.addView(actions, UiKit.matchWrap(this, 16));
 
         TextView privacy = UiKit.text(this,
@@ -316,6 +325,14 @@ public final class AccountListActivity extends Activity {
         if (position < total - 1) {
             labels.add("下移");
         }
+        // A Codex account's secret is a pairing, and the computer can revoke that
+        // pairing at any moment. Without an entry here the only way back is to add a
+        // second account for the same computer and leave the first one reading
+        // 「还没有与这台电脑配对」 with its history and slots stranded on it (review P2,
+        // 2026-10-03 - PairingStore.rebind existed with no caller at all).
+        if (com.aiusage.monitor.provider.codex.CodexProvider.ID.equals(account.getProviderId())) {
+            labels.add("重新配对");
+        }
         labels.add("删除账户");
 
         new AlertDialog.Builder(this)
@@ -344,6 +361,9 @@ public final class AccountListActivity extends Activity {
                 break;
             case "下移":
                 moveAccount(position, position + 1);
+                break;
+            case "重新配对":
+                openPairing(account.getId());
                 break;
             case "删除账户":
                 confirmDelete(account);
@@ -422,6 +442,17 @@ public final class AccountListActivity extends Activity {
     private void openDetail(String accountId) {
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra(MainActivity.EXTRA_ACCOUNT_ID, accountId);
+        startActivity(intent);
+    }
+
+    /**
+     * Re-pairing means this account, and it is the pairing screen that decides how the
+     * new introduction arrives (link, paste, or typed address plus code). The id travels
+     * so the screen can rebind instead of creating a second account for one computer.
+     */
+    private void openPairing(String accountId) {
+        Intent intent = new Intent(this, com.aiusage.monitor.ui.pair.PairActivity.class);
+        intent.putExtra(com.aiusage.monitor.ui.pair.PairActivity.EXTRA_ACCOUNT_ID, accountId);
         startActivity(intent);
     }
 

@@ -36,6 +36,16 @@ public enum UsageStatus {
      */
     BRIDGE_AUTH_REQUIRED,
 
+    /**
+     * A Bridge account that has no pairing to read through: the computer's row is
+     * gone, or the account predates pairing entirely. Separate from
+     * {@link #BRIDGE_AUTH_REQUIRED} because that one means the computer answered
+     * "no" to a token — the fix there is to pair again, the fix here is to pair at
+     * all, and neither is "the computer is offline" (Spec §53 rule 19, and
+     * docs/PHASE-7-PLAN.md step 9).
+     */
+    BRIDGE_PAIRING_REQUIRED,
+
     /** Nothing has ever been fetched for this account. */
     NO_DATA
 }

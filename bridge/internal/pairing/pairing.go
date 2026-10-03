@@ -42,7 +42,9 @@ const (
 	MaxFailedExchanges = 20
 
 	// Alphabet for human-typed codes, without the characters that get
-	// transcribed differently over a phone or a screen (0/o, 1/l/i, 2/z).
+	// transcribed differently over a phone or a screen: the digits 0, 1 and 2,
+	// and the letters o, l and i. 'z' stays in, so a client that tells the user
+	// "no z" would reject a code it just issued.
 	codeAlphabet = "abcdefghjkmnpqrstuvwxyz3456789"
 	codeChars    = 8
 

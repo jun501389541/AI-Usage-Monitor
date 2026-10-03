@@ -17,10 +17,6 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
-# GraphFlow local index and generated context artifacts
-.graphflow-cache/
-graphflow-out/
-
 # Build outputs / artifacts
 *.apk
 *.aab
@@ -45,3 +41,7 @@ commitmsg.txt
 # at the module root as well as under bin/.
 bridge/bin/
 bridge/*.exe
+
+# GraphFlow local artifacts
+.graphflow-cache/
+graphflow-out/
