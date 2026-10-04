@@ -13,7 +13,8 @@ MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）、Phase 7（手机与
 `AI Usage Monitor`，包名 / applicationId `com.aiusage.monitor`
 （`versionCode 57` / `versionName 4.0.0`）。Phase 7+（二维码配对、局域网自动发现、
 Direct OAuth、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸）尚未开始——其中二维码
-是 Phase 7 唯一没有落地的通道，等 D1（解码库依赖）决定后再开。
+是 Phase 7 唯一没有落地的通道；D1 已于 2026-10-04 拍板为「本阶段不引入第三方解码库」，
+扫码留作以后一次性接线的第四个 `PairingPayloadSource`。
 
 ## 当前功能
 
@@ -115,7 +116,7 @@ go build -o bin\aiusage-bridge.exe .\cmd\aiusage-bridge
   **绑定到非回环地址而没有 `--pair` 时进程直接启动失败**，不会悄悄裸奔。
 - 引入通道三条：① 整段 payload（`aiusage://pair#<base64url(json)>`，深链或粘贴）；
   ② 手输「地址 + 端口 + 8 位配对码」，先出指纹尾号、由人勾选确认后才发送配对码（A11）；
-  ③ 二维码 —— 等 D1，未实现。配对码字母表排除了易混的 `0o1i2l`。
+  ③ 二维码 —— 未实现；D1 已拍板为本阶段不引入第三方解码库（ML Kit / zxing 都不加）。配对码字母表排除了易混的 `0o1i2l`。
 - pair token 一次性、`--pair-ttl` 过期即失效；换回来的 Device Token 长期有效，
   落盘只有哈希，明文既不进数据库也不进日志。
 - 手机侧 `bridges` 表（schema v3；v2→v3 是单事务迁移，并在真机上彩排过「备份→降到 v2→
@@ -125,9 +126,10 @@ go build -o bin\aiusage-bridge.exe .\cmd\aiusage-bridge
   （证书没有 LAN SAN，也绝不 `setDefaultHostnameVerifier`）。
 - 界面上是「与电脑配对」和「已配对的电脑」（后者可忘记电脑，指向它的账户显示「还没有与这台
   电脑配对」，并可在账户列表长按该账户走「重新配对」原地换回令牌、保留历史与 Widget 绑定）。
-  「重新配对」的可恢复性目前**只成立到一半**：2026-10-03 的设备验收里它已经能进界面、读到证书、
-  原地保住同一个账户（不新增），但修复后那次刷新没有带回成功快照（`successful snapshots 0 -> 0`），
-  这一条在 `assert-bridge-pair.ps1` 里是红的，不算已交付。
+  「重新配对」的可恢复性已在设备上跑通（2026-10-04 的 `assert-bridge-pair.ps1`：能进界面、
+  读到证书、原地保住同一个账户不新增，修复后的刷新写回成功快照）。此前它记红，是验收脚本
+  在**数错了账户**——每次配对都把账户命名成那台电脑的地址，列表里三行同名，长按修的是第一行，
+  计数却按「最新创建的 id」算；现在脚本按「哪条凭据的 `updated_at` 被这次修复推进」来认定。
 - 模拟器专属：`127.0.0.1 / localhost / ::1` 在**拼 URL 时**就被改写成 `10.0.2.2`，也就是
   在建连之前（`PairingClient` 的探测与兑换走同一个 `addresses.baseUrl(...)`，两条路径不会
   指向不同机器）；改写只换拨出的地址，不换钉住的摘要——指纹仍然来自那台机器出示的证书。
@@ -223,6 +225,19 @@ Provider 已注册且至少有一个实例绑定（共 13 项检查）。
 
 > 该脚本对设备数据库**只读**：拷出后在主机 `sqlite3.exe` 上查，且两个真实 DeepSeek
 > 账户的 `id + credential_id` 在首尾各测一次并断言相等。
+
+验证手机与电脑配对（P-1…P-11，57 项；需要模拟器，且必须显式给出一个手机可达的绑定地址）：
+
+```powershell
+.\tools\smoke\assert-bridge-pair.ps1 -BridgeHost 0.0.0.0 -PairTtl 600s
+.\tools\smoke\assert-bridge-pair.ps1 -BridgeHost 0.0.0.0 -SkipLegacy   # 不重跑老回归脚本
+.\tools\smoke\assert-bridge-pair.ps1 -SelfTest                         # 只验脚本自身的子进程等待
+```
+
+> 不给 `-BridgeHost` 时手机侧各条一律记「未判定」而不是 PASS：只绑 `127.0.0.1` 的 Bridge
+> 在模拟器网段上没有响应，配对必然连不上。脚本只清理**自己这一轮**记录在
+> `tools/smoke/out/pair-manifest.txt` 里的账户与电脑，并故意留一台未登记的诱饵 Bridge 断言
+> 它不被删；设备数据库同样只读（拷出 db 与 `-wal`/`-shm`），两个真实 DeepSeek 账户首尾比对。
 
 把一个小组件放到桌面（Widget 拖拽无法用 `input draganddrop` 完成，
 必须用显式的 DOWN→MOVE→UP 手势）：

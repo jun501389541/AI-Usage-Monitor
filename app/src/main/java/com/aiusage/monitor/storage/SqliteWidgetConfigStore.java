@@ -72,8 +72,15 @@ public final class SqliteWidgetConfigStore implements WidgetConfigStore {
             values.put("refresh_interval_ms", config.getRefreshIntervalMs());
             values.put("sort_order", config.getSortOrder());
             values.put("updated_at", System.currentTimeMillis());
-            db.insertWithOnConflict(Database.TABLE_WIDGET_CONFIG, null, values,
+            long written = db.insertWithOnConflict(Database.TABLE_WIDGET_CONFIG, null, values,
                     SQLiteDatabase.CONFLICT_REPLACE);
+            if (written < 0) {
+                // Inside the transaction on purpose: a refused config row must roll the slot
+                // rewrite back too, or the widget keeps slots for a configuration that is no
+                // longer on record.
+                throw new IllegalStateException("widget_config refused the row for widget "
+                        + config.getWidgetId());
+            }
 
             db.delete(Database.TABLE_WIDGET_SLOTS, "widget_id = ?",
                     new String[]{String.valueOf(config.getWidgetId())});
@@ -83,8 +90,12 @@ public final class SqliteWidgetConfigStore implements WidgetConfigStore {
                 row.put("slot_index", slot.getSlotIndex());
                 row.put("account_id", slot.getAccountId());
                 row.put("metric_ids", WidgetMetricId.encode(slot.getMetricIds()));
-                db.insertWithOnConflict(Database.TABLE_WIDGET_SLOTS, null, row,
+                long slotWritten = db.insertWithOnConflict(Database.TABLE_WIDGET_SLOTS, null, row,
                         SQLiteDatabase.CONFLICT_REPLACE);
+                if (slotWritten < 0) {
+                    throw new IllegalStateException("widget_slots refused slot " + slot.getSlotIndex()
+                            + " of widget " + config.getWidgetId());
+                }
             }
             db.setTransactionSuccessful();
         } finally {

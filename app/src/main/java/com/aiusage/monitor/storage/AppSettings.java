@@ -51,9 +51,15 @@ public final class AppSettings {
         ContentValues values = new ContentValues();
         values.put("key", key);
         values.put("value", String.valueOf(value));
-        database.getWritableDatabase().insertWithOnConflict(
+        // A -1 return is SQLite saying "nothing was written" without throwing, and a
+        // setting that silently did not land is read back as the old value forever —
+        // the same shape the bridges table was fixed for. See StorageWriteReportTest.
+        long written = database.getWritableDatabase().insertWithOnConflict(
                 Database.TABLE_META, null, values,
                 android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+        if (written < 0) {
+            throw new IllegalStateException("app_meta refused the row for " + key);
+        }
     }
 
     public String getString(String key, String fallback) {
@@ -68,9 +74,12 @@ public final class AppSettings {
         ContentValues values = new ContentValues();
         values.put("key", key);
         values.put("value", value);
-        database.getWritableDatabase().insertWithOnConflict(
+        long written = database.getWritableDatabase().insertWithOnConflict(
                 Database.TABLE_META, null, values,
                 android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+        if (written < 0) {
+            throw new IllegalStateException("app_meta refused the row for " + key);
+        }
     }
 
     /** The background refresh interval, with the upstream default. */

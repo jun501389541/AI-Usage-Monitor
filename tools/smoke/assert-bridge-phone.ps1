@@ -545,8 +545,27 @@ try {
             Note "$Name : the address field never held $Address"
             return $false
         }
+        # Scroll until the save button is on screen before looking for it. Step 9 put
+        # 「与电脑配对（推荐）」 and the 「或直接手输地址（调试通道）」 label into the same card,
+        # so on this device the 保存 button sits below the fold - and uiautomator does not
+        # report the children of a ScrollView that are outside the viewport at all. Measured
+        # in run 20's dumps/29-form-filled.xml: the name, the address (http://10.0.2.2:38481)
+        # and the token (bullets) are all filled in, and `content-desc="保存"` is simply not
+        # in the file, so the old single dump looked up a node that was never going to be
+        # there and every C row after it died with "no such account". A human scrolls; so must
+        # the harness, and if scrolling cannot find it that is said out loud.
         $save = Node-Center $xml 'content-desc="保存"'
-        if ($null -eq $save) { return $false }
+        $scrolls = 0
+        while ($null -eq $save -and $scrolls -lt 4) {
+            Scroll-Down; Start-Sleep -Milliseconds 500
+            $scrolls++
+            $xml = Dump-Ui ("save-scroll-{0}" -f $scrolls)
+            $save = Node-Center $xml 'content-desc="保存"'
+        }
+        if ($null -eq $save) {
+            Note "$Name : the form is filled but no 保存 button appeared after $scrolls scrolls"
+            return $false
+        }
         Invoke-Adb shell input tap $save[0] $save[1] | Out-Null
         Start-Sleep -Seconds 2
         return $true

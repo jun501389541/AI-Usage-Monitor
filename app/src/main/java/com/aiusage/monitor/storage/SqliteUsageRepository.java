@@ -64,7 +64,13 @@ public final class SqliteUsageRepository implements UsageRepository {
         values.put("usage_data", UsageSnapshotCodec.encode(result));
         values.put("source", result.getSource().name());
         values.put("success", success ? 1 : 0);
-        database.getWritableDatabase().insert(Database.TABLE_SNAPSHOTS, null, values);
+        long written = database.getWritableDatabase().insert(Database.TABLE_SNAPSHOTS, null, values);
+        if (written < 0) {
+            // A history row that SQLite never accepted must not be reported as history;
+            // the caller's promise is "this attempt is on record", success or failure.
+            throw new IllegalStateException("usage_snapshots refused the row for "
+                    + accountId);
+        }
     }
 
     @Override
@@ -256,9 +262,14 @@ public final class SqliteUsageRepository implements UsageRepository {
         values.put("last_balance", current.toPlainString());
         values.put("total_usage", total.toPlainString());
         values.put("updated_at", System.currentTimeMillis());
-        database.getWritableDatabase().insertWithOnConflict(
+        long written = database.getWritableDatabase().insertWithOnConflict(
                 Database.TABLE_DAILY_USAGE, null, values,
                 android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+        if (written < 0) {
+            // Returning `total` after a refused write would tell the caller the day's
+            // accumulator advanced when the table says it did not.
+            throw new IllegalStateException("daily_usage refused the row for " + accountId);
+        }
 
         return total;
     }

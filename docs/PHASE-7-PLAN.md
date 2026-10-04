@@ -229,6 +229,10 @@ Number of camera devices: 1                  <- 摄像头不是瓶颈，解码�
 
 ---
 
+### 8.1 拍板记录（2026-10-04）
+
+**D1 = ①**：本阶段不做相机解码，不引入任何第三方依赖（ML Kit / zxing 都不加），协议与三条 dep-free 通道（深链 / 粘贴 / 手输 + 短码）为正式交付，扫码作为第四个 `PairingPayloadSource` 留待以后一次性接线。后果写清楚，别让人以为扫码近在手边：`docs/PHASE-7-REVIEW.md` 与 Spec §20 字面要求的「手机扫电脑屏幕上的码」这一条**没有实现也不会被任何验收行判绿**，`assert-bridge-pair.ps1` 里 P-10 就是为此而留在文字里而不是变成断言。其余三项决定：D2 = ①（本机真绑 `0.0.0.0` 与 TLS + 令牌同批，run 19/21 已按此验收）、D3 = ①、D4 = ①，均已按原推荐执行。
+
 ## 9. 风险
 
 | # | 风险 | 处置 |
@@ -327,7 +331,39 @@ health 指纹 == offer 指纹   True，tls=True
 
 **还没有做的两件事**，不要在读这份记录时误以为已完成：
 
-1. **步骤 9 的界面没有任何设备证据**：本轮没有跑 `assert-bridge-pair.ps1`（脚本本身也还没写，见步骤 10），也没有安装到模拟器截图。所以「配对页能用」目前是编译与逻辑层面的断言，不是观察到的行为。
+1. ~~**步骤 9 的界面没有任何设备证据**~~：这一条已被步骤 10 撤销——配对页、设备页与「重新配对」现在都有跑出来的证据，见下面「已交付：设备验收（步骤 10）」。同一节里第 2 条（A9 的重复 `bridgeUrl`）**仍然成立**。
 2. **A9 的重复地址仍在**：配对账户的读已经不看凭据里的 `bridgeUrl`，但那个字段还在写入（Phase 6 的手输账户靠它）。清掉它要一次凭据重写迁移，登记为遗留。
 
 一处与计划不同的做法需要先记下：schema v3 的迁移**不能**只在 JVM 里测——`android.database.sqlite` 在宿主 JVM 是桩，所以 v2→v3 的验证沿用 Phase 3 已建立的办法：在真机/模拟器上把设备库降级→升级回来，逐表比对（`assert-bridge-migration.ps1` 已按这套跑过 18 断言），并照例先备份后恢复、绝不写真 Key、绝不删两个真实 DeepSeek 账户。
+
+### 已交付：设备验收（步骤 10，2026-10-03 → 10-04）
+
+`tools/smoke/assert-bridge-pair.ps1`（1588 行，UTF-8 BOM）+ 一次真跑：
+
+```text
+2026-10-04 07:31  -BridgeHost 0.0.0.0 -PairTtl 600s -SkipLegacy
+CHECKS=57  FAILURES=0  SKIPPED=1
+  SKIP P-9: -SkipLegacy was given
+RESULT: *PASS* with 1 row(s) NOT JUDGED          tools/smoke/out/pair-run-19-skipl.txt
+
+2026-10-04 08:55  -BridgeHost 0.0.0.0 -PairTtl 600s          （同一轮判定全部判据）
+CHECKS=59  FAILURES=0  SKIPPED=0
+RESULT: *PASS*                                     tools/smoke/out/pair-run-21-full.txt
+```
+
+判据按 §5.3 的表逐条落地，其中比计划多出来的部分：P-1m 把手输通道（A11 人工核对门）单独成 5 行（三框回读、尾号先出、未勾选不发、复选框 `checked="true"`、发完自己关屏）；P-4 加了「原地恢复同一个账户」（菜单进得去 → 修复页读到证书 → 账户数不增 → 修复后写回成功快照）；P-7 的 logcat 扫描按**进程归属**排除本 harness 自己 `input text` 的 adbd 回显；P-11 把 `assert-bridge-bind.ps1` 当子判据在「本机已有一台配对 Bridge 占着网段」的状态下再跑一遍；P-10 不脚本化并在脚本末尾写明原因（扫码等 D1；不许为造状态登出真 Codex，该形状由 Go 侧假 app server 覆盖）。
+
+**这一轮真正的产出是四条验收脚本自己的 bug**，每一条都是先量到证据才改的，且都不许靠放宽断言变绿：
+
+| Bug | 怎么被发现的（实测，不是猜） | 处置 |
+| --- | --- | --- |
+| 子进程用 `Start-Process -Wait -RedirectStandardOutput` 等，能永久停住 | `-Wait` 等的是**最后一个持有重定向句柄的进程**，不是子进程退出：同一子进程留 25 秒的句柄持有者时返回 22.3 s，不留时 2.1 s，而子进程本身两次都是 ~2 s 就退了。run 12 的手机子脚本跑过 Gradle，Gradle 守护进程（`java 48664`）继承了日志句柄 → 父进程 21:53:52 后一字未写，子脚本 22:04:46 就已写完 summary；同一个 daemon 还让 run 13 在 `Setup-Work` 的 `Remove-Item` 上直接炸 | `973e199`：改 `WaitForExit(int)` + 到点判红并 Kill；每轮一个 `out\pair-run\run-<stamp>` 目录、启动时不删任何东西；退出码走 sidecar（实测 `-PassThru` 无 `-Wait` 时五种启动形态 `ExitCode` 全空）。`-SelfTest` 4 行 + 三轮变异各有归属（`tools/smoke/out/mutate-waitfix-report.txt`） |
+| `Pull-Db` 为了 checkpoint WAL 执行 `am force-stop`，落在 UI 流程中间就把界面杀了 | run 14 的 `dumps/16..19-p1m-send-p0..p3.xml` 里 `package=` 全是 `com.google.android.apps.nexuslauncher`：四次重试都没找到发送按钮，`Tap-Needle` 返回的 `$false` 被 `$null =` 丢掉，配对从未发出；而下一条判据把「焦点不是 PairActivity」读成配对成功 → 假绿。这解释了 run 8/9/10 绿、12/14 红（`Snapshot-Pairings` 是复审 P1 之后才插进勾选与发送之间的） | `3be3102`：before 快照移到打开配对页之前；P-1m/P-4 里每个 tap 的返回值进各自断言（「the send button was reached: True/False」）。run 19 第 30 行 `PASS P-1m and the computer recorded a second device` 是这条历史上第一次绿 |
+| 三个配对账户**同名**（都按 Bridge 地址命名），长按修的是 A、计数计的是 B | run 15 的 `dumps/22-p4-menu-p0.xml` 里有 3 个 `content-desc="https://10.0.2.2:38491"`，而 `$orphanId` 是 `order by created_at desc limit 1` 挑的；于是「修复后读不回额度」（`successful snapshots 0 -> 0`）连续两轮红——那是脚本在数旁观者的快照 | `e384598`：按「哪条 `credentials.updated_at` 被这次修复推进」认定被修账户，恰好一条才算数，0 条或多条报「无法认定」。run 19 第 43 行 `PASS P-4 the same account reads numbers again, history and all` → `rebind` 本身没问题，产品侧无缺陷 |
+| 重定向日志里的中文断言名变成乱码 | run 12 第 37 行 `the revoked account offers  on its own row`（原文是「重新配对」）；脚本已经设了 `[Console]::OutputEncoding`，但 stdout 被重定向时那句话管不到字节 | `973e199`：断言名一律 ASCII（脚本自己的策略注释也写明理由），needle 仍匹配屏上中文。子脚本 `assert-bridge-phone.ps1` 日志的同类乱码仍未修 |
+
+同一轮里还撤销了我自己加的一条过度收紧：曾要求「关屏 = 焦点仍在本应用内」，run 15 当场三处假红（P-1/P-1m/P-2），因为脚本用 `am start` 直起 `PairActivity`，`succeeded()` finish 之后任务栈空、焦点回到启动器是**正确行为**。现在关屏照常记录，但决定行的是设备侧读数（Bridge 的设备数、账户的凭据时间戳）与 tap 是否命中。
+
+事故登记（不许从记录里消失）：2026-10-03 为了重启模拟器误用 `-wipe-data`，这台机器上仅有的两个真实 DeepSeek Key 被抹掉（用户随后重录，桌面 Widget 一并没了）。此后设备侧一律只拷不写、绝不用 `adb input text` 打密钥、绝不登出真 Codex；恢复快照可能带回一个 app 窗口 dump 看不见的系统 ANR 对话框，`adb reboot` 清掉即可。
+
+本轮复跑门禁（2026-10-04 07:58，数字取自报告）：Gradle `BUILD SUCCESSFUL`，`SUITES=49 TESTS=516 FAILURES=0 ERRORS=0 SKIPPED=0`（+4 是复审 P1/P2 的回滚与可达性用例），lint **0 error / 40 warning**；Go `gofmt -l` 空、`go vet` 干净、`go test -count=1 ./...` **109 PASS / 0 失败 / 2 跳过**。**P-9 也已判定，且是在同一轮里跑绿的**（`pair-run-21-full.txt`，2026-10-04 08:55，不带 `-SkipLegacy`：`CHECKS=59 FAILURES=0 SKIPPED=0`、`PASS P-9 assert-bridge.ps1 still passes`、`PASS P-9 assert-bridge-phone.ps1 still passes`、`PASS P-11 assert-bridge-bind.ps1 still passes`，清理四行含诱饵对照全过）。它此前在 run 12/20 从第一条 UI 断言起红 30 条，是这一节的**第五个脚本 bug**，也是「uiautomator 剪掉视口外节点」那一族的复发：步骤 9 把「与电脑配对（推荐）」和「或直接手输地址（调试通道）」标题加进账户编辑卡之后，`保存` 落到折叠线以下——run 20 的 `dumps/29-form-filled.xml` 里账户名、`http://10.0.2.2:38481`、17 个圆点的令牌都填好了，文件里就是没有 `content-desc="保存"`，老脚本 `Node-Center` 拿到 null 直接放弃，C1/C2/A6/C9/C4 全部继承这个失败。`8524095` 改成滚动至多四次去找、仍找不到就写明「表单已填但滚动后没有保存按钮」，之后 `assert-bridge-phone.ps1 -SkipLegacy` = `55 checks, 0 failed`（exit 0）。记一条 UI 事实（不是缺陷）：1080×2400 上手输通道要往下滚一下才点得到保存。

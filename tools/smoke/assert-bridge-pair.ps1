@@ -67,6 +67,8 @@ $script:skips = 0
 $script:skipReasons = @{}
 $script:procs = @()
 $script:dumpSeq = 0
+$script:uiBroken = $false
+$script:uiBrokenReason = ""
 $script:work = ""
 $script:deviceReady = $false
 $script:bridgeExe = ""
@@ -91,6 +93,12 @@ $script:imeEnabled = @()
 
 function Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = "")
+    if ($script:uiBroken -and (-not $Ok) -and ($Name -match '^P-\d')) {
+        # Only a red phone row can be re-attributed, and only once the dead-guest signature
+        # has actually been seen. A green row is still reported green - it happened.
+        Skip "$Name" $script:uiBrokenReason
+        return
+    }
     $script:checks++
     if ($Ok) {
         Write-Host "PASS  $Name"
@@ -119,6 +127,29 @@ function Invoke-Adb {
     cmd /c "adb -s $Serial $($AdbArgs -join ' ') 2>&1"
 }
 
+function Note-GuestUiHealth {
+    param([string]$Dump, [string]$Tag)
+    # Run 22 lost twelve rows to the guest, not to the app. `logcat -b events` shows
+    # 10-04 01:30:31.926 `am_anr ... com.google.android.apps.nexuslauncher ... Input
+    # dispatching timed out` and two seconds later the same for com.android.systemui, and
+    # every dump from then on is a 4464-byte window whose only package is "android" - the
+    # ANR sheet, with no app node anywhere in it. Reading that as twelve product failures is
+    # precisely the misleading log this project refuses, so the signature is named once and
+    # later red phone rows become NOT JUDGED.
+    # Deliberately narrow: an app that crashed while the system is healthy still shows its
+    # own package in other windows and must stay FAIL, which is what the second condition
+    # and the -SelfTest rows exist to keep honest.
+    if ($script:uiBroken) { return }
+    if (-not $Dump -or $Dump.Length -lt 400) { return }
+    if ($Dump.Contains('package="' + $Package + '"')) { return }
+    if ($Dump -notmatch 'package="android"' -and $Dump -notmatch 'Application Not Responding') { return }
+    $script:uiBroken = $true
+    $script:uiBrokenReason = ("the guest UI showed no window of $Package from dump '$Tag' on; that " +
+        "dump is system-owned only (ANR sheet or dead SystemUI/launcher), so the device is not " +
+        "answering rather than the app misbehaving")
+    Note "GUEST UI UNRESPONSIVE: $script:uiBrokenReason - remaining failing phone rows report NOT JUDGED"
+}
+
 function Dump-Ui {
     param([string]$Tag)
     $script:dumpSeq++
@@ -133,7 +164,9 @@ function Dump-Ui {
         $reason = ((Invoke-Adb shell uiautomator dump /sdcard/bp.xml) -join " ").Trim()
         Invoke-Adb pull /sdcard/bp.xml $local 2>&1 | Out-Null
         if ((Test-Path $local) -and ((Get-Item $local).Length -gt 400)) {
-            return [System.IO.File]::ReadAllText($local, [System.Text.Encoding]::UTF8)
+            $text = [System.IO.File]::ReadAllText($local, [System.Text.Encoding]::UTF8)
+            Note-GuestUiHealth -Dump $text -Tag $Tag
+            return $text
         }
         Note "dump '$Tag' attempt $try got no hierarchy ($reason)"
         Start-Sleep -Milliseconds 800
@@ -1062,6 +1095,27 @@ exit 0
     Check "and a child that finishes reports its exit code instead of a timeout" `
         ($r3.Exited -and ($r3.Code -eq 3) -and $took3 -lt 15) `
             "exited=$($r3.Exited) code=[$($r3.Code)] after $took3 s"
+
+    # The dead-guest detector, judged against the real artefacts that motivated it rather
+    # than a synthetic string: run 22's own dumps, one from after the SystemUI ANR and one
+    # from before it, in the same directory. Both directions matter - flagging a healthy
+    # screen would turn every genuine failure into a SKIP, and missing a dead guest is what
+    # produced twelve misleading FAILs.
+    $deadDump = Join-Path $PSScriptRoot "out\pair-run\run-20261004-092753\dumps\72-enter-bridges-p3.xml"
+    $liveDump = Join-Path $PSScriptRoot "out\pair-run\run-20261004-092753\dumps\15-p1m-ticked.xml"
+    if (-not (Test-Path $deadDump) -or -not (Test-Path $liveDump)) {
+        Skip "the dead-guest detector reads run 22's real dumps" "those artefacts are no longer under tools/smoke/out/"
+    } else {
+        $script:uiBroken = $false; $script:uiBrokenReason = ""
+        Note-GuestUiHealth -Dump ([System.IO.File]::ReadAllText($liveDump, [System.Text.Encoding]::UTF8)) -Tag "selftest-live"
+        Check "a healthy app dump is not mistaken for a dead guest" (-not $script:uiBroken) `
+            "it flagged a screen that contains the app's own package; the rows after it would have been silently excused"
+        $script:uiBroken = $false; $script:uiBrokenReason = ""
+        Note-GuestUiHealth -Dump ([System.IO.File]::ReadAllText($deadDump, [System.Text.Encoding]::UTF8)) -Tag "selftest-dead"
+        Check "and run 22's ANR-sheet dump is recognised as the guest, not the app" ($script:uiBroken) `
+            "the 4464-byte package=`"android`" dump that cost twelve FAILs in run 22 did not raise the flag"
+        $script:uiBroken = $false; $script:uiBrokenReason = ""
+    }
     Summary
 }
 
@@ -1377,6 +1431,15 @@ try {
             # A new account would also read as a pass here, so the row counts the accounts
             # as well as the snapshots.
             $dbNow = Refresh-Db
+            # Every account this script pairs is named after the Bridge, so the list shows
+            # three identical rows (measured in run 15: dumps/22-p4-menu-p0.xml holds three
+            # content-desc="https://10.0.2.2:38491"). Pressing a name therefore cannot
+            # identify which account 修复 landed on, and picking one by created_at - what
+            # this row used to do - counted snapshots of an account nobody repaired, which
+            # is how "0 -> 0" looked like a product failure. Identify it by what the repair
+            # actually touches: its credential row gets a new updated_at.
+            $credSql = "select a.id || '=' || c.updated_at from accounts a join credentials c on c.id = a.credential_id where a.bridge_id != '';"
+            $credBefore = (Query-Db $dbNow $credSql)
             $orphanId = (Scalar-Db $dbNow `
                 "select id from accounts where bridge_id != '' order by created_at desc limit 1;")
             $orphanName = (Scalar-Db $dbNow "select display_name from accounts where id = '$orphanId';")
@@ -1433,18 +1496,31 @@ try {
                     "bridge-linked accounts: $accountsBefore -> $accountsAfter"
             $null = Refresh-All
             $null = Refresh-Db
+            # Whose credential moved? Exactly one account should answer to the repair. Zero
+            # means the repair wrote nothing it could be traced to; more than one means the
+            # press landed somewhere unpredictable. Both say so instead of counting a
+            # bystander's snapshots.
+            $credAfter = (Query-Db $script:dbPath $credSql)
+            $repaired = @()
+            foreach ($row in $credAfter) {
+                $id = ("" + $row) -split "=", 2
+                if ($credBefore -notcontains $row -and $id.Count -eq 2 -and $id[0]) { $repaired += $id[0] }
+            }
+            $readTarget = if ($repaired.Count -eq 1) { $repaired[0] } else { $orphanId }
             $snapsAfter = (Scalar-Db $script:dbPath `
-                "select count(*) from usage_snapshots where account_id = '$orphanId' and success = 1;")
+                "select count(*) from usage_snapshots where account_id = '$readTarget' and success = 1;")
             # 0 -> 0 on its own does not say why. The newest rows for that account say
             # whether the refresh wrote failures, wrote nothing, or wrote for a different
             # account than the one whose row was long-pressed.
             $lastSql = "select success || '/' || source || '/' || substr(replace(usage_data, char(10), ' '), 1, 70)"
-            $lastSql = $lastSql + " from usage_snapshots where account_id = '$orphanId' order by timestamp desc limit 3;"
+            $lastSql = $lastSql + " from usage_snapshots where account_id = '$readTarget' order by timestamp desc limit 3;"
             $lastRows = ((Query-Db $script:dbPath $lastSql) -join " ;; ")
-            $rowsForAccount = (Scalar-Db $script:dbPath "select count(*) from usage_snapshots where account_id = '$orphanId';")
+            $rowsForAccount = (Scalar-Db $script:dbPath "select count(*) from usage_snapshots where account_id = '$readTarget';")
             Check "P-4 the same account reads numbers again, history and all" `
-                ([int64]$snapsAfter -gt [int64]$snapsBefore) `
-                    ("successful snapshots for $orphanId : $snapsBefore -> $snapsAfter; rows for it: $rowsForAccount; newest: $lastRows")
+                (($repaired.Count -eq 1) -and ([int64]$snapsAfter -gt [int64]$snapsBefore)) `
+                ("the repair landed on " + $repaired.Count + " credential row(s) [" + ($repaired -join ",") + "]" +
+                 "; successful snapshots for $readTarget : $snapsBefore -> $snapsAfter" +
+                 "; rows for it: $rowsForAccount; newest: $lastRows")
         } else {
             Skip "P-4 the phone's wording" $(if ($script:deviceReady) { "no host sqlite3" } else { "no device registered" })
         }

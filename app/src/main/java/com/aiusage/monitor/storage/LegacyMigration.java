@@ -147,9 +147,15 @@ public final class LegacyMigration {
         values.put("last_balance", last);
         values.put("total_usage", total);
         values.put("updated_at", System.currentTimeMillis());
-        database.getWritableDatabase().insertWithOnConflict(
+        long written = database.getWritableDatabase().insertWithOnConflict(
                 Database.TABLE_DAILY_USAGE, null, values,
                 android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+        if (written < 0) {
+            // The migration's promise is that the legacy number is carried over; a refused
+            // row has to reach the caller instead of the accumulator looking migrated.
+            throw new IllegalStateException("daily_usage refused the migrated row for "
+                    + accountId);
+        }
     }
 
     /** Keeps an unparseable legacy value from poisoning the accumulator. */
@@ -170,8 +176,13 @@ public final class LegacyMigration {
         android.content.ContentValues values = new android.content.ContentValues();
         values.put("key", META_FLAG);
         values.put("value", "1");
-        database.getWritableDatabase().insertWithOnConflict(
+        long written = database.getWritableDatabase().insertWithOnConflict(
                 Database.TABLE_META, null, values,
                 android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+        if (written < 0) {
+            // Writing the flag is what stops the migration running twice; saying it ran when
+            // the row was refused would let the next launch migrate the same account again.
+            throw new IllegalStateException("app_meta refused the migration flag");
+        }
     }
 }

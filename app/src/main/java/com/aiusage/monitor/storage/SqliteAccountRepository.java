@@ -63,8 +63,13 @@ public final class SqliteAccountRepository implements AccountRepository {
 
         // insertWithOnConflict(REPLACE) keeps the id stable across edits, which is
         // the property the spec's acceptance criterion depends on.
-        database.getWritableDatabase().insertWithOnConflict(
+        long written = database.getWritableDatabase().insertWithOnConflict(
                 Database.TABLE_ACCOUNTS, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);
+        if (written < 0) {
+            // SQLite declined the row without throwing; a saved account that is not in the
+            // table reads as "it worked until the next launch".
+            throw new IllegalStateException("accounts refused the row for " + account.getId());
+        }
     }
 
     @Override
