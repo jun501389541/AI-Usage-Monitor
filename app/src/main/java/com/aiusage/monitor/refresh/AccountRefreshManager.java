@@ -414,73 +414,8 @@ public final class AccountRefreshManager {
      * snapshot was AUTH_REQUIRED.
      */
     public static final class AccountView {
-        /** The last successful reading, or null when there has never been one. */
-        public final UsageResult lastSuccess;
-        /** The newest attempt, successful or not; null only if never fetched. */
-        public final UsageResult lastAttempt;
-
-        /**
-         * Pairs the two readings for one account.
-         *
-         * <p>Public because this is a value, not a factory: the widget layer
-         * assembles a display from it and a caller that has already read both
-         * rows — a screen holding a snapshot from a refresh it just did — should
-         * not have to reach through the manager to pair them.
-         */
         public AccountView(UsageResult lastSuccess, UsageResult lastAttempt) {
-            this.lastSuccess = lastSuccess;
-            this.lastAttempt = lastAttempt;
-        }
-
-        /**
-         * The status to display: the newest attempt's when there is one, so a
-         * failure after a success is visible instead of being hidden behind the
-         * last good reading.
-         */
-        public UsageStatus status() {
-            if (lastAttempt != null) {
-                return lastAttempt.getStatus();
-            }
-            return lastSuccess == null ? UsageStatus.NO_DATA : lastSuccess.getStatus();
-        }
-
-        /**
-         * The status to display, with staleness folded in.
-         *
-         * <p>Staleness used to live only in the widget path ({@code lastKnown()}),
-         * so a row whose newest snapshot was a success but hours old still read
-         * "账户可用" while its widget said "数据已过期" — the two surfaces
-         * disagreed about the same stored data. A failed newest attempt is
-         * returned as-is: a failure is a present-tense fact about the service,
-         * not data that quietly went stale.
-         *
-         * @param intervalMs the configured background refresh interval
-         * @param now        the instant to judge freshness against
-         */
-        public UsageStatus displayStatus(long intervalMs, long now) {
-            if (lastAttempt != null && lastAttempt.getStatus() != UsageStatus.OK) {
-                return lastAttempt.getStatus();
-            }
-            UsageResult display = lastAttempt != null ? lastAttempt : lastSuccess;
-            if (display == null) {
-                return UsageStatus.NO_DATA;
-            }
-            if (RefreshPolicy.isStale(display.getUpdatedAt(), intervalMs, now)) {
-                return UsageStatus.STALE;
-            }
-            return display.getStatus();
-        }
-
-        /** True when the last attempt failed but an older success is retained. */
-        public boolean showingRetainedData() {
-            if (lastAttempt == null || lastSuccess == null) {
-                return false;
-            }
-            // >=, not >: a success and the failure right after it can land in
-            // the same millisecond, and equal timestamps still mean the newest
-            // row (the failure) is what the row is displaying.
-            return lastAttempt.getStatus() != UsageStatus.OK
-                    && lastAttempt.getUpdatedAt() >= lastSuccess.getUpdatedAt();
+            super(lastSuccess, lastAttempt);
         }
     }
 

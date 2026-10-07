@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android build, unit tests, and lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build, test, and lint
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+
+  bridge:
+    name: Go bridge checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: bridge/go.mod
+          cache-dependency-path: bridge/go.sum
+
+      - name: Check formatting
+        working-directory: bridge
+        run: test -z "$(gofmt -l ./cmd ./internal)"
+
+      - name: Vet
+        working-directory: bridge
+        run: go vet ./cmd/... ./internal/...
+
+      - name: Test
+        working-directory: bridge
+        run: go test -count=1 ./...

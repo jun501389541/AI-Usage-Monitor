@@ -150,7 +150,7 @@ public final class PairingStore {
 
     private void apply(Bridge row, String accountId, String deviceToken) throws AuthException {
         accounts.replaceCredential(accountId,
-                CredentialPayload.forBridge(row.getBaseUrl(), deviceToken));
+                CredentialPayload.forDeviceToken(deviceToken));
         accounts.attachBridge(accountId, row.getId());
     }
 

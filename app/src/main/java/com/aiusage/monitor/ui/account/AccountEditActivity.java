@@ -421,7 +421,17 @@ public final class AccountEditActivity extends Activity {
         try {
             AuthContext saved = accountManager.openCredential(account);
             if (CodexProvider.ID.equals(providerId)) {
-                String url = saved.get(AuthContext.KEY_BRIDGE_URL);
+                String url;
+                if (!TextUtils.isEmpty(account.getBridgeId())) {
+                    com.aiusage.monitor.model.Bridge bridge = AppGraph.get(this).bridgeRepository()
+                            .findById(account.getBridgeId());
+                    url = bridge == null ? "" : bridge.getBaseUrl();
+                    // A paired address is owned by the bridge row. Change it
+                    // through re-pairing so its pinned identity stays in sync.
+                    bridgeUrlInput.setEnabled(false);
+                } else {
+                    url = saved.get(AuthContext.KEY_BRIDGE_URL);
+                }
                 if (!TextUtils.isEmpty(url)) {
                     bridgeUrlInput.setText(url);
                     bridgeUrlInput.setSelection(url.length());
@@ -450,7 +460,9 @@ public final class AccountEditActivity extends Activity {
         }
         if (account.getCredentialId() == null || account.getCredentialId().isEmpty()) {
             addWarning(CodexProvider.ID.equals(providerId)
-                    ? "此账户尚未保存 Bridge 地址，刷新时会提示没有填写电脑端 Bridge 地址。"
+                    ? (!TextUtils.isEmpty(account.getBridgeId())
+                            ? "配对账户缺少设备令牌，请从账户列表重新配对。"
+                            : "此账户尚未保存 Bridge 地址，刷新时会提示没有填写电脑端 Bridge 地址。")
                     : "此账户尚未保存密钥，刷新时会提示 API Key 无效或已失效。",
                     UiKit.COLOR_HINT);
         }
@@ -485,6 +497,7 @@ public final class AccountEditActivity extends Activity {
         boolean codex = CodexProvider.ID.equals(providerId);
         String bridgeUrl = codex ? bridgeUrlInput.getText().toString().trim() : "";
         String bridgeToken = codex ? bridgeTokenInput.getText().toString().trim() : "";
+        String bridgeCredentialPayload = "";
 
         if (codex) {
             // Checked before anything is written, so a typo is reported while the
@@ -492,10 +505,19 @@ public final class AccountEditActivity extends Activity {
             // the host the user just typed would connect somewhere before anything
             // authorises it. Spec §53 rule 22.
             try {
-                new BridgeAuthAdapter().validate(CredentialPayload.forBridge(bridgeUrl, bridgeToken));
+                String editablePayload = CredentialPayload.forBridge(bridgeUrl, bridgeToken);
+                new BridgeAuthAdapter().validate(editablePayload);
+                boolean paired = isEditing() && !TextUtils.isEmpty(account.getBridgeId());
+                bridgeCredentialPayload = paired
+                        ? CredentialPayload.forDeviceToken(bridgeToken)
+                        : editablePayload;
             } catch (AuthException exception) {
                 Toast.makeText(this, exception.getMessage(), Toast.LENGTH_LONG).show();
-                bridgeUrlInput.requestFocus();
+                if (isEditing() && !TextUtils.isEmpty(account.getBridgeId())) {
+                    bridgeTokenInput.requestFocus();
+                } else {
+                    bridgeUrlInput.requestFocus();
+                }
                 return;
             }
         }
@@ -508,11 +530,9 @@ public final class AccountEditActivity extends Activity {
                 Account created = accountManager.createAccount(
                         providerId, name, codex ? AuthType.BRIDGE_TOKEN : AuthType.API_KEY);
                 if (codex) {
-                    // Always stored, and there is no "remember" choice to make: the
-                    // address is configuration the app cannot work without, so an
-                    // account that kept none could never be refreshed.
+                    // A hand-configured account keeps its endpoint with the token.
                     accountManager.replaceCredential(created.getId(),
-                            CredentialPayload.forBridge(bridgeUrl, bridgeToken));
+                            bridgeCredentialPayload);
                 } else if (remember && !key.isEmpty()) {
                     accountManager.replaceCredential(created.getId(), CredentialPayload.forApiKey(key));
                 }
@@ -529,7 +549,7 @@ public final class AccountEditActivity extends Activity {
                 }
                 if (codex) {
                     accountManager.replaceCredential(accountId,
-                            CredentialPayload.forBridge(bridgeUrl, bridgeToken));
+                            bridgeCredentialPayload);
                 } else if (remember && !key.isEmpty()) {
                     accountManager.replaceCredential(accountId, CredentialPayload.forApiKey(key));
                 } else if (!remember) {

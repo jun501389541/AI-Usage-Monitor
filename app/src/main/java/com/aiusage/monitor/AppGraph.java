@@ -11,6 +11,7 @@ import com.aiusage.monitor.refresh.AccountRefreshManager;
 import com.aiusage.monitor.storage.AppSettings;
 import com.aiusage.monitor.storage.Database;
 import com.aiusage.monitor.storage.LegacyMigration;
+import com.aiusage.monitor.storage.PairedBridgeCredentialMigration;
 import com.aiusage.monitor.storage.SqliteAccountRepository;
 import com.aiusage.monitor.storage.SqliteBridgeRepository;
 import com.aiusage.monitor.storage.SqliteCredentialStore;
@@ -51,6 +52,7 @@ public final class AppGraph {
     private final BridgeRepository bridgeRepository;
     private final AppSettings settings;
     private final LegacyMigration legacyMigration;
+    private final PairedBridgeCredentialMigration pairedBridgeCredentialMigration;
 
     private AppGraph(Context context) {
         this.appContext = context.getApplicationContext();
@@ -80,6 +82,8 @@ public final class AppGraph {
         this.widgetConfigStore = new SqliteWidgetConfigStore(appContext);
         this.settings = new AppSettings(appContext);
         this.legacyMigration = new LegacyMigration(appContext, accountManager, Database.get(appContext));
+        this.pairedBridgeCredentialMigration = new PairedBridgeCredentialMigration(
+                accountManager, bridgeRepository);
     }
 
     public static AppGraph get(Context context) {
@@ -167,6 +171,8 @@ public final class AppGraph {
      * home screen must still find their key working.
      */
     public LegacyMigration.Result ensureMigrated() {
-        return legacyMigration.runIfNeeded();
+        LegacyMigration.Result result = legacyMigration.runIfNeeded();
+        pairedBridgeCredentialMigration.runIfNeeded();
+        return result;
     }
 }

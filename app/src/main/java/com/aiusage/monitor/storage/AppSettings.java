@@ -20,11 +20,15 @@ public final class AppSettings {
     /** Foreground refresh interval chosen by the user, in milliseconds. */
     public static final String KEY_FOREGROUND_REFRESH_INTERVAL = "refresh_interval_ms";
 
+    /** Provider-specific foreground intervals; the unsuffixed key is the legacy fallback. */
+    public static final String KEY_DEEPSEEK_REFRESH_INTERVAL = "refresh_interval_ms.deepseek";
+    public static final String KEY_BRIDGE_REFRESH_INTERVAL = "refresh_interval_ms.bridge";
+
     /** Background refresh interval chosen by the user, in milliseconds. */
     public static final String KEY_BACKGROUND_REFRESH_INTERVAL = "widget_refresh_interval_ms";
 
     /** The interval used when the user has never chosen one. */
-    public static final long DEFAULT_BACKGROUND_REFRESH_INTERVAL_MS = 600000L;
+    public static final long DEFAULT_BACKGROUND_REFRESH_INTERVAL_MS = 1800000L;
 
     private final Database database;
 
@@ -84,7 +88,9 @@ public final class AppSettings {
 
     /** The background refresh interval, with the upstream default. */
     public long backgroundRefreshIntervalMs() {
-        return getLong(KEY_BACKGROUND_REFRESH_INTERVAL, DEFAULT_BACKGROUND_REFRESH_INTERVAL_MS);
+        long stored = getLong(KEY_BACKGROUND_REFRESH_INTERVAL,
+                DEFAULT_BACKGROUND_REFRESH_INTERVAL_MS);
+        return com.aiusage.monitor.refresh.RefreshIntervalOptions.normalizeBackground(stored);
     }
 
     /** Every key currently stored, for diagnostics. */

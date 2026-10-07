@@ -67,12 +67,10 @@ public final class CredentialPayload {
     /**
      * Builds {@code {"deviceToken":"…","bridgeUrl":"…"}}.
      *
-     * <p>Spec §7 shows the Bridge payload as {@code {"deviceToken":"…"}}; the url
-     * member is a deliberate extension. The alternative - a column of its own -
-     * would mean a schema migration for one string, and {@code accounts.bridge_id}
-     * is reserved for a Bridge's permanent identity rather than its address
-     * (Spec §54). Keeping the two together also means rotating the token cannot
-     * leave it pointing at a different machine.
+     * <p>Hand-configured debug accounts have no paired bridge row, so they keep
+     * their endpoint in this payload. Paired accounts store only the token and
+     * resolve their current endpoint from the row referenced by
+     * {@code accounts.bridge_id}.
      */
     public static String forBridge(String bridgeUrl, String deviceToken) throws AuthException {
         String url = normaliseUrl(bridgeUrl);

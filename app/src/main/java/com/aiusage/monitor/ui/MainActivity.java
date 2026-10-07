@@ -48,6 +48,8 @@ import com.aiusage.monitor.provider.codex.CodexProvider;
 import com.aiusage.monitor.provider.deepseek.DeepSeekProvider;
 import com.aiusage.monitor.refresh.AccountRefreshManager;
 import com.aiusage.monitor.refresh.HolidayUpdater;
+import com.aiusage.monitor.refresh.RefreshIntervalOptions;
+import com.aiusage.monitor.refresh.RefreshPolicy;
 import com.aiusage.monitor.storage.AppSettings;
 import com.aiusage.monitor.usage.UsageRepository;
 import com.aiusage.monitor.usage.UsageSnapshot;
@@ -83,8 +85,9 @@ import java.util.concurrent.Executors;
  * <p>One upstream behaviour is deliberately preserved even though it is
  * unusual: a key typed without ticking "记住密钥" is still used for the request
  * it was typed for. The user asked for a balance, not for a storage decision.
- * A Bridge account has nothing to type, so its query goes through the stored
- * credential instead — the only copy of that account's address and token.
+ * A paired Bridge account resolves its address from the paired-computer row and
+ * keeps only its device token in the encrypted credential. Hand-configured
+ * debug accounts keep both values in that credential.
  *
  * <p>Phase 2 demotes this screen: the launcher is now
  * {@link com.aiusage.monitor.ui.account.AccountListActivity} and this class is
@@ -107,14 +110,6 @@ public final class MainActivity extends Activity {
     /** Upstream {@code MainActivity.java:58}. */
     private static final long DEFAULT_REFRESH_MS = 15000L;
 
-    /** Upstream {@code MainActivity.java:60-61}. */
-    private static final long[] REFRESH_INTERVALS = {1000L, 5000L, 10000L, 15000L, 30000L, 60000L, 300000L, 600000L, 900000L};
-    private static final String[] REFRESH_LABELS = {"1 秒", "5 秒", "10 秒", "15 秒", "30 秒", "1 分钟", "5 分钟", "10 分钟", "15 分钟"};
-
-    /** Upstream {@code MainActivity.java:62-63}. */
-    private static final long[] BACKGROUND_REFRESH_INTERVALS = {1000L, 5000L, 10000L, 30000L, 60000L, 300000L, 600000L, 1800000L, 3600000L};
-    private static final String[] BACKGROUND_REFRESH_LABELS = {"1 秒", "5 秒", "10 秒", "30 秒", "1 分钟", "5 分钟", "10 分钟", "30 分钟", "1 小时"};
-
     private static final int COLOR_BG = Color.rgb(11, 11, 12);
     private static final int COLOR_CARD = Color.rgb(20, 20, 22);
     private static final int COLOR_INPUT = Color.rgb(15, 15, 17);
@@ -133,7 +128,7 @@ public final class MainActivity extends Activity {
     private final Runnable autoRefreshRunnable = new Runnable() {
         @Override
         public void run() {
-            if (isFinishing()) {
+            if (isFinishing() || refreshIntervalMs == RefreshPolicy.MANUAL_ONLY) {
                 return;
             }
             updatePeakCard();
@@ -206,7 +201,7 @@ public final class MainActivity extends Activity {
         settings = graph.settings();
 
         account = resolveAccount();
-        refreshIntervalMs = settings.getLong(AppSettings.KEY_FOREGROUND_REFRESH_INTERVAL, DEFAULT_REFRESH_MS);
+        loadRefreshIntervals();
         backgroundRefreshIntervalMs = settings.backgroundRefreshIntervalMs();
 
         WidgetRefreshScheduler.scheduleMidnight(this);
@@ -259,6 +254,15 @@ public final class MainActivity extends Activity {
         }
         String accountId = intent.getStringExtra(EXTRA_ACCOUNT_ID);
         return accountId == null ? "" : accountId;
+    }
+
+    private void loadRefreshIntervals() {
+        String providerKey = isBridgeAccount()
+                ? AppSettings.KEY_BRIDGE_REFRESH_INTERVAL
+                : AppSettings.KEY_DEEPSEEK_REFRESH_INTERVAL;
+        long legacy = settings.getLong(AppSettings.KEY_FOREGROUND_REFRESH_INTERVAL, DEFAULT_REFRESH_MS);
+        long stored = settings.getLong(providerKey, legacy);
+        refreshIntervalMs = RefreshIntervalOptions.normalizeForeground(stored, isBridgeAccount());
     }
 
     private void configureWindow() {
@@ -383,7 +387,7 @@ public final class MainActivity extends Activity {
         queryButton = actionButton(queryLabel(), true);
         credentialCard.addView(queryButton, matchHeight(50, 18));
 
-        autoStatusView = text("进入自动查询 · 每 " + refreshIntervalLabel() + "刷新", 11, COLOR_HINT, Typeface.NORMAL);
+        autoStatusView = text("进入自动查询 · " + refreshIntervalDescription(), 11, COLOR_HINT, Typeface.NORMAL);
         autoStatusView.setGravity(Gravity.CENTER);
         autoStatusView.setClickable(true);
         autoStatusView.setFocusable(true);
@@ -614,7 +618,14 @@ public final class MainActivity extends Activity {
         try {
             AuthContext authContext = accountManager.openCredential(account);
             if (isBridgeAccount()) {
-                String bridgeUrl = authContext.get(AuthContext.KEY_BRIDGE_URL);
+                String bridgeUrl;
+                if (!TextUtils.isEmpty(account.getBridgeId())) {
+                    com.aiusage.monitor.model.Bridge bridge = graph.bridgeRepository()
+                            .findById(account.getBridgeId());
+                    bridgeUrl = bridge == null ? "" : bridge.getBaseUrl();
+                } else {
+                    bridgeUrl = authContext.get(AuthContext.KEY_BRIDGE_URL);
+                }
                 bridgeConfigured = !TextUtils.isEmpty(bridgeUrl);
                 if (bridgeAddressView != null) {
                     bridgeAddressView.setText(bridgeConfigured ? bridgeUrl : "尚未配置");
@@ -673,11 +684,8 @@ public final class MainActivity extends Activity {
                 Toast.makeText(this, "请先在「编辑账户」里填写 Bridge 地址", Toast.LENGTH_SHORT).show();
                 return;
             }
-            // The address and the token were written on the account form and are
-            // encrypted there; this screen has no field to type them into, so it
-            // asks the manager to open the credential itself. That is also why a
-            // Bridge account needs no "remember" tick: what it has is already
-            // stored, and storing it again from here would need a plaintext copy.
+            // The refresh manager resolves paired addresses from the bridge row
+            // and opens the token from the credential store itself.
             runQuery(automatic, queried -> refreshManager.refresh(queried));
             return;
         }
@@ -747,28 +755,29 @@ public final class MainActivity extends Activity {
     }
 
     private String refreshIntervalLabel() {
-        for (int index = 0; index < REFRESH_INTERVALS.length; index++) {
-            if (REFRESH_INTERVALS[index] == refreshIntervalMs) {
-                return REFRESH_LABELS[index];
-            }
-        }
-        return REFRESH_LABELS[3];
+        return RefreshIntervalOptions.labelFor(refreshIntervalMs);
+    }
+
+    private String refreshIntervalDescription() {
+        return refreshIntervalMs == RefreshPolicy.MANUAL_ONLY
+                ? "详情页仅手动刷新"
+                : "每 " + refreshIntervalLabel() + "刷新";
     }
 
     private void showRefreshIntervalDialog() {
-        int selected = 3;
-        for (int index = 0; index < REFRESH_INTERVALS.length; index++) {
-            if (REFRESH_INTERVALS[index] == refreshIntervalMs) {
-                selected = index;
-                break;
-            }
-        }
+        boolean bridge = isBridgeAccount();
+        long[] intervals = RefreshIntervalOptions.foregroundIntervals(bridge);
+        String[] labels = RefreshIntervalOptions.foregroundLabels(bridge);
+        int selected = RefreshIntervalOptions.selectedIndex(intervals, refreshIntervalMs, 0);
         new AlertDialog.Builder(this)
                 .setTitle("刷新频率")
-                .setSingleChoiceItems(REFRESH_LABELS, selected, (dialog, which) -> {
-                    refreshIntervalMs = REFRESH_INTERVALS[which];
-                    settings.setLong(AppSettings.KEY_FOREGROUND_REFRESH_INTERVAL, refreshIntervalMs);
-                    autoStatusView.setText("每 " + refreshIntervalLabel() + "刷新");
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    refreshIntervalMs = intervals[which];
+                    String providerKey = bridge
+                            ? AppSettings.KEY_BRIDGE_REFRESH_INTERVAL
+                            : AppSettings.KEY_DEEPSEEK_REFRESH_INTERVAL;
+                    settings.setLong(providerKey, refreshIntervalMs);
+                    autoStatusView.setText(refreshIntervalDescription());
                     scheduleAutoRefresh(refreshIntervalMs);
                     dialog.dismiss();
                 })
@@ -777,24 +786,20 @@ public final class MainActivity extends Activity {
     }
 
     private void showBackgroundRefreshDialog() {
-        int selected = 6;
-        for (int index = 0; index < BACKGROUND_REFRESH_INTERVALS.length; index++) {
-            if (BACKGROUND_REFRESH_INTERVALS[index] == backgroundRefreshIntervalMs) {
-                selected = index;
-                break;
-            }
-        }
+        long[] intervals = RefreshIntervalOptions.backgroundIntervals();
+        String[] labels = RefreshIntervalOptions.backgroundLabels();
+        int selected = RefreshIntervalOptions.selectedIndex(intervals, backgroundRefreshIntervalMs, 1);
         new AlertDialog.Builder(this)
                 .setTitle("后台查询频率")
-                .setSingleChoiceItems(BACKGROUND_REFRESH_LABELS, selected, (dialog, which) -> {
-                    backgroundRefreshIntervalMs = BACKGROUND_REFRESH_INTERVALS[which];
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    backgroundRefreshIntervalMs = intervals[which];
                     settings.setLong(AppSettings.KEY_BACKGROUND_REFRESH_INTERVAL, backgroundRefreshIntervalMs);
                     // Upstream only showed a toast here and left the already
                     // armed alarm on the old interval, so the change did not
                     // take effect until the next fire. Re-arming makes the
                     // setting mean what it says.
                     WidgetRefreshScheduler.schedule(this);
-                    Toast.makeText(this, "后台查询频率：" + BACKGROUND_REFRESH_LABELS[which], Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "后台查询频率：" + labels[which], Toast.LENGTH_SHORT).show();
                     dialog.dismiss();
                 })
                 .setNegativeButton("取消", null)
@@ -907,7 +912,7 @@ public final class MainActivity extends Activity {
             detailsView.setVisibility(View.VISIBLE);
             detailsView.setText(getString(R.string.quota_window_block, quotaLines));
         }
-        autoStatusView.setText("每 " + refreshIntervalLabel() + "刷新 · 更新于 " + currentTime());
+        autoStatusView.setText(refreshIntervalDescription() + " · 更新于 " + currentTime());
         renderRecentReadings();
 
         // The manager has already stored the snapshot; the widgets only need to
@@ -930,7 +935,7 @@ public final class MainActivity extends Activity {
         detailsView.setVisibility(View.VISIBLE);
         detailsView.setText(message);
         renderRecentReadings();
-        autoStatusView.setText("每 " + refreshIntervalLabel() + "刷新 · 本次失败，稍后重试");
+        autoStatusView.setText(refreshIntervalDescription() + " · 本次失败，稍后重试");
     }
 
     private void setLoading(boolean value) {
@@ -1048,7 +1053,11 @@ public final class MainActivity extends Activity {
 
     private void scheduleAutoRefresh(long delayMs) {
         handler.removeCallbacks(autoRefreshRunnable);
-        handler.postDelayed(autoRefreshRunnable, delayMs);
+        if (delayMs == RefreshPolicy.MANUAL_ONLY) {
+            return;
+        }
+        handler.postDelayed(autoRefreshRunnable,
+                RefreshIntervalOptions.normalizeForeground(delayMs, isBridgeAccount()));
     }
 
     private String currentTime() {
@@ -1092,7 +1101,9 @@ public final class MainActivity extends Activity {
         // rebuilding here keeps the switch deterministic instead of relying on
         // the framework to replay this intent into a new instance. onResume
         // runs right after this and starts the new account's first query.
+        handler.removeCallbacks(autoRefreshRunnable);
         account = next;
+        loadRefreshIntervals();
         buildInterface();
         loadStoredCredential();
         loading = false;
@@ -1108,7 +1119,7 @@ public final class MainActivity extends Activity {
         updatePeakCard();
         handler.removeCallbacks(secondTickRunnable);
         scheduleSecondTick();
-        if (!loading && canQueryNow()) {
+        if (refreshIntervalMs != RefreshPolicy.MANUAL_ONLY && !loading && canQueryNow()) {
             queryBalance(true);
         } else {
             scheduleAutoRefresh(refreshIntervalMs);

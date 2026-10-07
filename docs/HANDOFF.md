@@ -1,8 +1,8 @@
 # HANDOFF — AI Usage Monitor 交接文档
 
 > 写给下一个接手的 agent。本文件自包含：读完这份 + §4 文档地图里的计划与审查文档，你就能继续开发而不需要翻旧会话。
-> 最后更新：2026-10-04。代码基线 = `45f73d3`（**Phase 7 手机半边步骤 5-10 交付完毕**：`bridges` 表 v3、payload 三通道、SPKI 钉指纹 + 逐连接主机名校验、配对/设备界面、`tools/smoke/assert-bridge-pair.ps1`；此前 Bridge 半边与两份外部复审也已处置完）。⚠️ 本地把 `a6cc527` 的 subject 改写后重排了 5 笔提交，那批哈希全变了（`a6cc527`→`e384598`、`880e624`→`e8ccf6b`、`4b27aa5`→`54e7976`、`1a76b94`→`8524095`、`efe9373`→`45f73d3`）；这些提交从未推送过，但引用旧哈希的地方都以 `git log --oneline -8` 为准。
-> 本轮实测门禁（2026-10-04 07:58 复跑，数字取自报告不是控制台）：Android `SUITES=49 TESTS=516 FAILURES=0 ERRORS=0 SKIPPED=0`、Lint **0 error / 40 warning**；Bridge `gofmt`/`vet` 干净、**109 PASS / 0 失败 / 2 跳过**。
+> 最后更新：2026-10-07。代码基线 = `ff45925`（**Phase 7 手机半边步骤 5-10 交付完毕**：`bridges` 表 v3、payload 三通道、SPKI 钉指纹 + 逐连接主机名校验、配对/设备界面、`tools/smoke/assert-bridge-pair.ps1`；此前 Bridge 半边与两份外部复审也已处置完）。⚠️ 本地把 `a6cc527` 的 subject 改写后重排了 5 笔提交，那批哈希全变了（`a6cc527`→`e384598`、`880e624`→`e8ccf6b`、`4b27aa5`→`54e7976`、`1a76b94`→`8524095`、`efe9373`→`45f73d3`）；这些提交从未推送过，但引用旧哈希的地方都以 `git log --oneline -8` 为准。
+> 最近已记录门禁（2026-10-04 09:25）：Android `SUITES=50 TESTS=517 FAILURES=0 ERRORS=0 SKIPPED=0`、Lint **0 error / 41 warning**；Bridge `gofmt`/`vet` 干净、**109 PASS / 0 失败 / 2 跳过**。
 > **设备验收全绿且无「未判定」**：`assert-bridge-pair.ps1 -BridgeHost 0.0.0.0 -PairTtl 600s`（不带 `-SkipLegacy`，2026-10-04 08:55）= **CHECKS=59 FAILURES=0 SKIPPED=0 → RESULT: *PASS***，`tools/smoke/out/pair-run-21-full.txt`；`b1dc773` 的 insert 改动之后又以同一旗标重跑一轮，run 23 = **59 / 0 / 0 → RESULT: *PASS***（`pair-run-23-full.txt`），顺带把夹在中间的 run 22 结案：它那 12 条红是客机 UI 死了（`am_anr` 记录 nexuslauncher 与 systemui 输入分发超时，之后所有 dump 只有 `package="android"`），不是应用，同一份构建换个健康设备全绿。P-1…P-8、P-11（把 `assert-bridge-bind.ps1` 当子判据跑绿）与 P-9 的三个老脚本 + `assert-bridge-phone.ps1` 全在同一轮里判定；清理四行含「未登记的诱饵 Bridge 不被删」对照也过，两个真实 DeepSeek 账户首尾一致。
 > P-9 曾在 run 12/20 里从第一条 UI 断言 `a Codex account can be added through the UI` 起红、其余 30 条都是下游，根因是**老手机脚本不滚动**：步骤 9 往账户编辑卡里加了「与电脑配对（推荐）」+「或直接手输地址（调试通道）」标题，把 `保存` 挤出视口，而 uiautomator 根本不上报 ScrollView 视口外的节点（run 20 的 `dumps/29-form-filled.xml` 里三个 EditText 全填好、`content-desc="保存"` 就是不存在）。`1a76b94`（改写提交信息后为 `8524095`） 让它滚动查找、找不到就明说，之后 `55 checks / 0 failed`。顺带一条 UI 事实（不是 bug）：1080×2400 上手输地址要滚一下才点得到保存。
 > Phase 0-6 全部完成；Phase 7 手机半边交付且配对路径有全绿设备验收；扫码通道仍未做（等 D1），见 `docs/PHASE-7-PLAN.md` §10。
@@ -11,7 +11,7 @@
 
 ## 1. 项目一句话
 
-把上游「DeepSeek 余额查询」安卓小工具（单账户、明文 Key、无测试）重写为**多账户、密钥加密、分层架构、有测试**的 AI Usage Monitor，严格按 `AI-Usage-Monitor-Development-Plan.md`（2504 行规范，下称 Spec）执行。当前 Phase 0–6 全部交付并通过设备验收；**Phase 7 的 Windows/Bridge 半边已交付，并被两轮外部复审（Phase 7 单项 + Phase 0–7 综合）处置完毕**，**下一步是 Phase 7 的手机半边（步骤 5-10）**。
+把上游「DeepSeek 余额查询」安卓小工具（单账户、明文 Key、无测试）重写为**多账户、密钥加密、分层架构、有测试**的 AI Usage Monitor，严格按 `AI-Usage-Monitor-Development-Plan.md`（2504 行规范，下称 Spec）执行。Phase 0–6 全部交付并通过设备验收；Phase 7 手机半边（步骤 5-10）也已交付并通过设备验收。尚未实现的是二维码配对通道，等待 D1 决策。
 
 ## 2. 当前状态快照
 
@@ -21,19 +21,19 @@
 | 测试 | SUITES=50 TESTS=517 FAILURES=0 ERRORS=0 SKIPPED=0（2026-10-04 09:25 复跑；host-JVM，JUnit 4.13.2；演变 273→284→304→329→331→344→349→407→411→428→487→512→516→517。最后 +1 是 `StorageWriteReportTest`：全仓 insert 结果不许被丢弃的源码 pin，写它时我自己的正则漏了 3 处（`String.matches()` 是双端锚定的，模式结尾停在 `\(` 就不吃带参数的行），是这条测试的最小计数守卫把「扫描自己坏掉」和「代码干净」区分开来而暴露的。最后 +4 是复审 P1/P2 补的 `PairingStoreTest`（保存失败回滚两条方向：`aBridgeRowThatCouldNotBeSavedLeavesNoAccountBehind`、`aRebindWhoseRowCouldNotBeSavedTouchesNothing`）与 `PairingWiringTest`（写入结果被报出、`rebind` 可达且真传账户 id）。**配对界面已有设备证据**：`assert-bridge-pair.ps1` run 19 57 项 0 失败，粘贴/深链、手输地址 + 短码 + 尾号人工确认门、撤销后原地「重新配对」恢复同一账户、重启后凭同一配对继续读数，都是跑出来的而不是推断的 |
 | Go 门禁 | **109 PASS 行（含 2 条子测试）/ 0 失败 / 2 跳过**（`cd bridge && gofmt -l ./cmd ./internal && go vet ./cmd/... ./internal/... && go test -count=1 -v ./...`，Go 1.27.0；8 包：bridge / codex / discover / filestore / identity / pairing / redact / server。演变 55→66（Phase 5 复审）→98（Phase 7 步骤 1-4）→108（Phase 7 复审 P2 修复）→109（综合复审 §2.5）。两条跳过是 `TestKeyFileIsOwnerOnly` 与 `TestModeIsRequestedOnTheTemporary`——Windows 不携带 POSIX 权限位，测试自己 skip 并说明原因）。`gofmt -l .` 会把忽略目录 `bin/phase5-review-probe` 也列出来——那是复审者留下的探针，不在门禁范围内。Bridge 是**独立 Go module**、不在 Gradle 里，所以这是第二套门禁，Android 门禁替代不了它 |
 | Lint | 0 error / **41 warning**（2026-10-04 09:25；比早上那轮记录的 40 多 1。**这 1 条我没有归因**：新代码全在 `storage/` 的纯 Java 里，lint 报告里没有一条指向 `storage/` 的文件，所以不是 `b1dc773` 带来的；差额落在哪个 id 上还没有逐项对过，别把它当成已解释；逐项分布见下）（按 id：`LockedOrientationActivity`×6、`DiscouragedApi`×6、`HardcodedText`×4、`SetTextI18n`×4、`CustomX509TrustManager`×2、`TrustAllX509TrustManager`×2、`SmallSp`×2、`UselessParent`×2、`UnusedResources`×3，其余各 1）。Phase 7 手机半边带来 10 条：`bridge/` 里 5 条（`BadHostnameVerifier`×1 + `TrustAllX509TrustManager`×2 + `CustomX509TrustManager`×2）全部指向**刻意为之**的探针通道与钉证 TrustManager，界面 5 条与既有屏幕同族——按 `UnusedAttribute`（`networkSecurityConfig` 需 API 24 而 minSdk 23）的同一立场**都不压制**。`AndroidGradlePluginVersion` 要联网探测新版本，`--offline` 下不出，这是基线在 30/35/40 之间跳动时的一项口径差 |
-| 工作区 | 除下列文档外干净；`.graphflow-cache/`、`graphflow-out/` 是工具缓存。`docs/PHASE-5-REVIEW.md`、`docs/PHASE-7-REVIEW.md`、`docs/PHASE-0-7-REVIEW.md` 是**另一个 Agent 写的复审**，按原样入库（不改写别人的结论）。处置与实测的位置：Phase 5 四项 → `PHASE-5-PLAN.md` §11；Phase 7 的 1 项 P1 + 4 项 P2、跨阶段 5 项 → `PHASE-7-PLAN.md` §10 与 `REVIEW-AND-NEXT-STEPS.md` 末节 |
+| 工作区 | 分支 `codex/project-optimizations` 包含本轮优化（Wrapper、CI/Lint、刷新策略、配对凭据迁移、职责拆分与文档同步）。本轮未运行本地构建、单测或 Lint；推送后以 GitHub Actions 结果为准。`.graphflow-cache/`、`graphflow-out/` 是工具缓存。历史复审文档按原样保留。 |
 | 设备 | 模拟器 **Pixel_7_API_37**（Android 17 / SDK 37 预览镜像，`hw.gpu.enabled=no` → 冷启很慢且会拖垮 adb 自动化；AVD 名只能问控制台 `adb emu avd name`，`getprop` 里那几个属性是空的，验收日志的抬头因此现在打 `avd=Pixel_7_API_37`）。⚠️ **2026-10-03 出过一次事故**：为了重启设备误用 `-wipe-data`，把这台机器上仅有的两个真实 DeepSeek Key 抹掉了（用户随后重录，桌面 Widget 也一并没了——依赖 Widget 的 C 系列行要么先 `place-widget.ps1` 重放要么如实记 SKIP）。此后设备侧一律：**只拷不写**（`run-as cat` db + `-wal`/`-shm`）、绝不用 `adb input text` 打密钥（adbd 会把命令行原样记进 logcat）、绝不登出真 Codex。模拟器恢复快照时可能带回一个**系统 ANR 对话框**，它是系统窗口、app 窗口的 `uiautomator dump` 看不见（当时 dump 只有 4470 字节、焦点写着 `Application Not Responding: com.aiusage.monitor`），`adb reboot` 40 秒即可清掉——金丝雀失败先查焦点，别当成注入坏了。这台机器内存吃紧：模拟器在跑时 Gradle 默认 `-Xmx2048m` 起不来（`页面文件太小` / DOS 1455），要 `-Dorg.gradle.jvmargs=-Xmx900m -Dorg.gradle.workers.max=1`；且 Gradle 必须带 `GRADLE_USER_HOME=D:\Android\.gradle`（否则 `--offline` 找不到 `lint-gradle` 直接 BUILD FAILED，看着像代码坏了） |
-| 待办 | ① 扫码通道等 **D1**（第三方解码库 vs 手写 vs 不做）——协议与三条免依赖通道都在，扫码只是第四个 `PairingPayloadSource`；② 配对账户凭据 payload 仍重复存 `bridgeUrl`（读侧已按 `bridge_id` 解析，删字段要一次凭据重写迁移）；③ UI 事实（不是缺陷）：1080×2400 上「手输地址（调试通道）」要往下滚一下才点得到 `保存`。~~9 处 `insert*` 返回值被丢弃~~ 已在 `b1dc773` 全部改成「-1 就抛并点名表与键」，配 `StorageWriteReportTest` 源码 pin。Phase 3/4/5/6 遗留见 §6，Phase 7 全过程见 `docs/PHASE-7-PLAN.md` §10 |
+| 待办 | ① 扫码通道等 **D1**（第三方解码库 vs 手写 vs 不做）——协议与三条免依赖通道都在，扫码只是第四个 `PairingPayloadSource`；② 本分支为配对账户实现了凭据迁移，paired payload 只存设备令牌，手动调试账户仍在凭据中保存 URL；③ UI 事实（不是缺陷）：1080×2400 上「手输地址（调试通道）」要往下滚一下才点得到 `保存`。~~9 处 `insert*` 返回值被丢弃~~ 已在 `b1dc773` 全部改成「-1 就抛并点名表与键」，配 `StorageWriteReportTest` 源码 pin。Phase 3/4/5/6 遗留见 §6，Phase 7 全过程见 `docs/PHASE-7-PLAN.md` §10 |
 
 ## 3. 架构与红线
 
 - Android 原生 Java，**零第三方生产依赖**（`HttpURLConnection`、`RemoteViews`、`AlarmManager`、程序化 UI 无布局 XML）。测试依赖仅 JUnit 4.13.2 + `org.json:json:20240303`。
-- Gradle 9.1.0 + AGP 9.0.1，单模块 `:app`，wrapper 离线锁 `file:///D:/Android/downloads/gradle-9.1.0-bin.zip`。
+- Gradle 9.1.0 + AGP 9.0.1，单模块 `:app`；Gradle Wrapper 使用官方 HTTPS 分发地址并校验 SHA-256。
 - 包名/应用 ID `com.aiusage.monitor`，minSdk 23 / targetSdk 35 / compileSdk 36。
 - 分层（`app/src/main/java/com/aiusage/monitor/`）：`model/ auth/ provider/ util/ storage/ usage/ account/ refresh/ widget/ ui/`。
 - **Spec §45 红线：`account/` 不得依赖 `usage/`**。单一刷新链：`Account → ProviderRegistry → CredentialStore → AuthAdapter → Provider → UsageResult → UsageRepository → UsageSnapshot → WidgetUpdateManager`；App/Widget/后台都只读 `UsageRepository`。
 - `ProviderRegistry` 是 JVM 单例且 `registerBuiltIns()` 不幂等——`AppGraph.registerBuiltIns()` 用 `find(id)==null` 守卫；测试里共享 provider 要 `reset()` + 条件注册。
-- Provider 层契约（零回归保留）：UA `"DeepSeekBalance/1.0 Android"`、超时 12000/15000ms、401/403/429 错误映射、`REFRESH_INTERVALS/LABELS`、`DEFAULT_REFRESH_MS=15000L`、后台 `DEFAULT_BACKGROUND_REFRESH_MS=600000L`。Phase 2 验收 6 用 provider SHA-256 锁过（`a081ab3a…`）。
+- Provider 层契约（零回归保留）：UA `"DeepSeekBalance/1.0 Android"`、超时 12000/15000ms、401/403/429 错误映射、`REFRESH_INTERVALS/LABELS`、`DEFAULT_REFRESH_MS=15000L`。刷新设置按 Provider 保存；Bridge 前台刷新最短 5 分钟以匹配缓存，后台默认 30 分钟、最短 15 分钟，并支持仅手动刷新。Phase 2 验收 6 用 provider SHA-256 锁过（`a081ab3a…`）。
 - SQLite 表（`storage/Database.java`，**`VERSION = 3`**）：`accounts / credentials / usage_snapshots / widget_config / widget_slots / daily_usage / app_meta / bridges`。`bridges` 列 = `(id, name, base_url, fingerprint, added_at, last_seen)`，一台电脑一行、按 **Bridge ID** 认，地址只是可变属性；`accounts.bridge_id` 指过去（空 = 没配对）。v2→v3 是单事务迁移、不 `INSERT`，且**只能在设备上验**（`android.database.sqlite` 在宿主 JVM 是桩）：`tools/smoke/assert-bridge-migration.ps1` 做过「备份→降到 v2→升回 v3→逐表比对→字节级还原」18 项。`daily_usage` 列 = `(account_id, day, last_balance, total_usage, updated_at)`，PK `(account_id, day)`，`updated_at INTEGER NOT NULL`（注入测试数据时必须给值）。
 - **Widget Slot 模型（Phase 3）**：`widget_slots(widget_id, slot_index, account_id, metric_ids)`，PK `(widget_id, slot_index)` + `idx_widget_slots_account`。`widget_config.account_id` 是**遗留列**（minSdk 23 上 SQLite 不能 DROP COLUMN），v2 起无人读写，唯一事实是 slot 行。`metric_ids` 用 `|` 分隔，编解码只在 `widget/WidgetMetricId` 一处；迁移 SQL 里的字面量由 `WidgetSlotModelTest` 与 `encode(defaults())` 对钉。
 - Widget 展示口径：`widget/WidgetSlotResolver`（纯 JVM、可测）产出 `WidgetSlotView`，`WidgetRenderer` 只收字符串；状态文案统一走 `util/StatusWords`，新鲜度走 `util/Freshness`，两者与账户列表共用，**不要再各写一份**。4×2 静态 3 行（`WidgetRenderer.MAX_SLOTS`），未使用的行 `View.GONE`。
@@ -94,13 +94,8 @@
 3. **Phase 5 已交付**（`docs/PHASE-5-PLAN.md` §10）。遗留（明确延后，非缺陷）：① 只服务 codex 一个 provider；② 无配对 / 无局域网发现 / 手机不接入（Phase 6-8）；③ 托盘与开机自启未做；④ `dataTimestamp` 与 `sourceTimestamp` 目前同值——Codex 载荷里没有源端时间戳；⑤ B7/B8 只有单测覆盖，真实的「方法不存在 / 令牌过期」形状仍未观测。
 4. **Phase 6 已交付**（`docs/PHASE-6-PLAN.md` §10）。遗留（明确延后，非缺陷）：① Bridge 仍只绑回环、`/v1/*` **无鉴权**——手机能连是因为 `10.0.2.2` 就是宿主 loopback，真机 LAN 必须与 token 校验同批（D1 选 ①）；② 额度不进 Widget（要新指标 id + `metric_ids` 迁移 + 每 Slot 选择器，D4）；③ 失败快照 `providerId` 是空串（今天无消费方读它，登记不掩盖）；④ 详情页失败时读数区被错误文本替换，「保留上次成功」成立的位置是库与列表而非详情页；⑤ 提交 `a2e6e4b` 的 subject 写错（重复了步骤 1 的措辞），不改写历史。
 5. **Phase 5 复审四项已修完并关闭**（`docs/PHASE-5-PLAN.md` §11：复现原文、四个提交、11 次变异、门禁与两份验收数字）。要复现的四项都在改代码**之前**跑过一遍：`raw_secret_present=true`、`error_is_unknown=true`、`after_late_failure has_data=false`，第四项是控制流事实（`CodexFetcher.Fetch` 只在成功分支挂 `RefusedRequests()`）。**别把这份复审当成已完成的验收文档**——它记录的是问题，处置与实测在 PHASE-5-PLAN §11。
-6. **Phase 7 已交付 Bridge 半边并处置完外部复审的 4 项 P2**（`docs/PHASE-7-PLAN.md` §10）。剩下的按序：
-   ① 在活设备上重跑 `assert-bridge-phone.ps1`（本轮 2026-10-03 因模拟器挂死未跑完，见 §8 最后两条；脚本本身已修好并带金丝雀断言）；
-   ② 步骤 5：`bridges` 表 v3 + 设备侧可逆迁移彩排（`android.database.sqlite` 在宿主 JVM 是桩，只能在设备上验）；`AccountManager` 还缺 `bridgeId` 的 setter；
-   ③ 步骤 6-8：payload 三通道、`PinnedTrustManager` + **A10 逐连接 `PinnedHostnameVerifier`**（复审 P1：证书没有 LAN SAN，只钉指纹在真机上必然握手失败；也**不许**用全局 `setDefaultHostnameVerifier`）、配对客户端与三态文案；
-   ④ 步骤 9-10：配对页 + 设备管理页 + `assert-bridge-pair.ps1`（P-1…P-11）。
-   仍未拍板的是 **D1（扫码要不要第三方依赖）** 与 **D2（要不要在这台机器上真绑 LAN）**；默认绑定仍是回环。
-7. **跨阶段综合复审（`docs/PHASE-0-7-REVIEW.md`）五项已关闭**：`abcd8a7`（§2.5 拒绝标记）← `1c3f06e`（§2.3 保留决胜）← `c52b6e1`（§2.1 陈旧账户）← `a0bf9cf`（§2.2 零点只重绘）← `cbae8fd`（§2.4 历史读数）。每项都是先写会红的复现用例再改代码；处置表、变异清单与本轮门禁数字在 `docs/REVIEW-AND-NEXT-STEPS.md` 末节。唯一没闭环的是上面第 6 条的 ①：手机验收要在活设备上重跑。
+6. **Phase 7 手机半边步骤 5-10 已交付**（`docs/PHASE-7-PLAN.md` §10）；设备验收记录为 59 checks / 0 failures / 0 skipped。当前剩余的是明确范围决策：① 二维码通道 D1；② 是否将 Bridge 监听扩展到 LAN（D2），当前仍默认 loopback。
+7. **跨阶段综合复审（`docs/PHASE-0-7-REVIEW.md`）五项已关闭**：`abcd8a7`（§2.5 拒绝标记）← `1c3f06e`（§2.3 保留决胜）← `c52b6e1`（§2.1 陈旧账户）← `a0bf9cf`（§2.2 零点只重绘）← `cbae8fd`（§2.4 历史读数）。每项都是先写会红的复现用例再改代码；处置表、变异清单与本轮门禁数字在 `docs/REVIEW-AND-NEXT-STEPS.md` 末节。Phase 7 手机半边已经完成设备验收；第 6 条剩余项均为 D1/D2 范围决策。
 8. 实施期照旧规矩：每步独立提交 + 门禁数字 + 设备证据；先计划后动工；先给文件与验证案例再改代码；**验收脚本里不许出现永不会失败的断言**——Phase 3/4/5/6 四轮都栽过，Phase 6 这轮又当场抓到两条（见 §8 的「额度窗口」与 `-Serial` 两条）。
 
 ## 7. 用户决策史（不要重新发明）
@@ -200,4 +195,4 @@
 
 ---
 
-接手后的第一个动作建议：`git log --oneline -14` + 读 `docs/PHASE-7-PLAN.md` §10（步骤 1-4 交付了什么、复审五项各自的复现与处置、哪些还只是计划）→ 在活设备上重跑一次 `assert-bridge-phone.ps1`（本轮模拟器挂了）→ 再动工 Phase 7 步骤 5（`bridges` 表 v3）。四条别重犯：① 提取 `auth.json` 令牌自己打 HTTP，已被 Spec L804-809 否决；② 验收脚本里不许出现永不会失败的断言——每一轮都栽过，都是靠断言**失败**发现的，不是靠它通过（本轮又抓到两条：`$null -ne 0` 让「拒绝启动」永真、日志混进返回值让 4 条红没打印出来）；③ Bridge 放开 LAN 之前必须先有 token 校验，二者同批交付，否则等于向全网公开账户额度；④ 手机侧 TLS 的 TrustManager 与 HostnameVerifier 是**两件事**，只钉指纹在 LAN 地址上必然握手失败，而放开主机名校验只能逐连接做（`docs/PHASE-7-PLAN.md` A10）。祝顺利。
+接手后的第一个动作建议：核对工作区和分支，阅读 `docs/PHASE-7-PLAN.md` §10；Phase 7 手机半边已完成，后续先按 D1/D2 决策确定扫码与 LAN 范围。
