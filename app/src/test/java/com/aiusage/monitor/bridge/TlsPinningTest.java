@@ -54,6 +54,19 @@ public class TlsPinningTest {
     }
 
     @Test
+    public void certificatePinsAreExplicitAndRefuseOtherCertificates() throws Exception {
+        X509Certificate alpha = certificate(GoVectors.ALPHA_CERT_PEM);
+        byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(alpha.getEncoded());
+        StringBuilder hex = new StringBuilder();
+        for (byte b : digest) hex.append(String.format(java.util.Locale.US, "%02x", b & 255));
+        FingerprintPin pin = new FingerprintPin("cert-sha256:" + hex);
+        assertTrue(pin.matches(alpha));
+        assertFalse(pin.matches(certificate(GoVectors.BETA_CERT_PEM)));
+        assertFalse(new FingerprintPin(hex.toString()).matches(alpha));
+        assertEquals(hex.substring(0, 8).toUpperCase(java.util.Locale.US), pin.tail());
+    }
+
+    @Test
     public void aPinThatIsNotADigestIsRefusedAtConstruction() {
         for (String bad : new String[]{null, "", "abc", "z".repeat(64), "0".repeat(63)}) {
             try {

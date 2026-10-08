@@ -18,7 +18,7 @@ wrong, both of which make a working app look broken.
 
 Usage:
   .\tools\dev.ps1                 # build, install, relaunch, print recent logcat
-  .\tools\dev.ps1 -NoBuild        # relaunch + logcat only (fast edit->see loop)
+  .\tools\dev.ps1 -NoBuild        # relaunch installed version + logcat only
   .\tools\dev.ps1 -Follow         # relaunch, then stream logcat (Ctrl+C to stop)
   .\tools\dev.ps1 -ErrorsOnly     # crashes and errors only
   .\tools\dev.ps1 -AccountId ID   # open the detail page for one account

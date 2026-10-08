@@ -81,7 +81,7 @@ public final class PairingStore {
             // state this class promises never to leave, because it reads as
             // 「还没有与这台电脑配对」 forever with a valid credential in the keystore.
             bridges.save(row);
-            apply(row, created.getId(), paired.deviceToken());
+            apply(row, created.getId(), paired.deviceToken(), paired.remoteAccountId());
         } catch (RuntimeException | AuthException failure) {
             accounts.delete(created.getId(), nothingToClean());
             // A row this call created goes with the account; a row that was already
@@ -118,7 +118,7 @@ public final class PairingStore {
             throw new NotStored("这台电脑的新地址没能写进手机的配对表：" + failure.getMessage());
         }
         try {
-            apply(row, account.getId(), paired.deviceToken());
+            apply(row, account.getId(), paired.deviceToken(), paired.remoteAccountId());
         } catch (RuntimeException | AuthException failure) {
             if (previous == null) {
                 bridges.delete(row.getId());
@@ -148,9 +148,9 @@ public final class PairingStore {
                 : incoming.toBuilder().addedAt(existing.getAddedAt()).build();
     }
 
-    private void apply(Bridge row, String accountId, String deviceToken) throws AuthException {
+    private void apply(Bridge row, String accountId, String deviceToken, String remoteAccountId) throws AuthException {
         accounts.replaceCredential(accountId,
-                CredentialPayload.forDeviceToken(deviceToken));
+                CredentialPayload.forRemoteDevice(deviceToken, remoteAccountId));
         accounts.attachBridge(accountId, row.getId());
     }
 

@@ -44,4 +44,5 @@ bridge/*.exe
 
 # GraphFlow local artifacts
 .graphflow-cache/
+.graphflow/
 graphflow-out/

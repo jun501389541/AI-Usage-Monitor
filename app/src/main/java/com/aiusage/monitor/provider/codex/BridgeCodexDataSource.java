@@ -59,7 +59,19 @@ public final class BridgeCodexDataSource {
      */
     public UsageResult fetch(String baseUrl, String deviceToken, String pin, String accountId,
                              long nowMs) throws UsageException {
+        return fetch(baseUrl, deviceToken, pin, accountId, nowMs, "");
+    }
+
+    public UsageResult fetch(String baseUrl, String deviceToken, String pin, String accountId,
+                             long nowMs, String remoteAccountId) throws UsageException {
         String url = buildUrl(baseUrl);
+        if (pin != null && pin.startsWith(com.aiusage.monitor.bridge.FingerprintPin.CERTIFICATE_PREFIX)) {
+            if (remoteAccountId == null || !remoteAccountId.matches("[0-9a-f]{64}")) {
+                throw new UsageException(UsageError.BRIDGE_PAIRING_REQUIRED, "没有已授权的远端账户，请重新配对。");
+            }
+            url = url.substring(0, url.length() - USAGE_PATH.length())
+                    + "/v1/accounts/" + remoteAccountId + "/usage";
+        }
         BridgeTransport chosen = chooseTransport(url, pin);
 
         Http.Response response;
@@ -74,11 +86,25 @@ public final class BridgeCodexDataSource {
 
         int code = response.getCode();
         if (response.isSuccess()) {
+            if (pin != null && pin.startsWith(com.aiusage.monitor.bridge.FingerprintPin.CERTIFICATE_PREFIX)) {
+                try {
+                    if (!remoteAccountId.equals(new JSONObject(response.getBody()).optString("accountId"))) {
+                        throw new UsageException(UsageError.BRIDGE_UNAUTHORIZED,
+                                "电脑返回的账户与配对授权账户不同，请重新配对。");
+                    }
+                } catch (JSONException invalid) {
+                    throw new UsageException(UsageError.UNKNOWN, "电脑端额度响应格式无效。", invalid);
+                }
+            }
             return BridgeUsageParser.parse(response.getBody(), accountId, nowMs);
         }
         if (code == 401 || code == 403) {
             throw new UsageException(UsageError.BRIDGE_UNAUTHORIZED,
                     "电脑端拒绝了这个令牌（HTTP " + code + "）");
+        }
+        if (code == 409) {
+            throw new UsageException(UsageError.BRIDGE_UNAUTHORIZED,
+                    "电脑的 Codex 账户已变化，请在电脑重新授权并配对。");
         }
         if (code == 503) {
             // The Bridge's 503 body names the class, so the app can tell offline

@@ -67,6 +67,9 @@ public final class ManualTarget {
      * compares, so a tail match is a human step and not the security check itself.
      */
     public static String tailOf(String fingerprint) {
+        if (fingerprint != null && fingerprint.startsWith(FingerprintPin.CERTIFICATE_PREFIX)) {
+            fingerprint = fingerprint.substring(FingerprintPin.CERTIFICATE_PREFIX.length());
+        }
         if (fingerprint == null || fingerprint.length() < 8) {
             return "";
         }

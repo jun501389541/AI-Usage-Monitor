@@ -11,10 +11,8 @@ Phase 4（历史快照的区间读取与保留策略）、Phase 5（Windows AI U
 MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）、Phase 7（手机与电脑配对：
 三种引入通道、SPKI 指纹钉定与逐连接主机名校验、`bridges` 表、配对与设备界面）**。应用名
 `AI Usage Monitor`，包名 / applicationId `com.aiusage.monitor`
-（`versionCode 57` / `versionName 4.0.0`）。Phase 7+（二维码配对、局域网自动发现、
-Direct OAuth、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸）尚未开始——其中二维码
-是 Phase 7 唯一没有落地的通道；D1 已于 2026-10-04 拍板为「本阶段不引入第三方解码库」，
-扫码留作以后一次性接线的第四个 `PairingPayloadSource`。
+（`versionCode 57` / `versionName 4.0.0`）。手机现已接入二维码配对。
+局域网自动发现、Direct OAuth、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸尚未开始。
 
 ## 当前功能
 
@@ -116,7 +114,25 @@ go build -o bin\aiusage-bridge.exe .\cmd\aiusage-bridge
   **绑定到非回环地址而没有 `--pair` 时进程直接启动失败**，不会悄悄裸奔。
 - 引入通道三条：① 整段 payload（`aiusage://pair#<base64url(json)>`，深链或粘贴）；
   ② 手输「地址 + 端口 + 8 位配对码」，先出指纹尾号、由人勾选确认后才发送配对码（A11）；
-  ③ 二维码 —— 未实现；D1 已拍板为本阶段不引入第三方解码库（ML Kit / zxing 都不加）。配对码字母表排除了易混的 `0o1i2l`。
+  ③ 手机内置二维码扫描（相机或相册），识别后自动走同一条 TLS 配对流程。
+  为满足扫码连接需求，手机引入 ZXing Embedded；识别在本机完成，无需另装扫码 App。
+  配对码字母表排除了易混的 `0o1i2l`。
+
+### 用手机扫码连接
+
+1. 手机与电脑连接同一个 Wi-Fi，在电脑端打开“添加设备”的配对二维码。
+2. 手机点击添加账户，选择 Codex，再点击“扫码连接电脑（推荐）”。
+3. 允许相机权限并对准二维码，识别后自动配对并添加账户；也可从相册选择二维码图片。
+
+手机支持 Go Bridge 的 `aiusage://pair#…` 和 CodexLauncher 的 `https://…/v1/device#…` 二维码。
+CodexLauncher 扫码后还需在电脑端批准设备申请，手机等待批准并自动完成配对。
+过期或已使用时，请在电脑端重新生成。
+“其它配对方式”提供粘贴配对内容及手输地址入口。已有账户重新配对会保留历史与小组件绑定。
+本仓库的 Bridge CLI 通过 `--add-device` 输出配对内容；上述二维码由电脑端界面提供。
+两端字段与验证范围见 [CodexLauncher 联调记录](docs/CODEXLAUNCHER-PAIRING.md)。
+
+### 配对数据
+
 - pair token 一次性、`--pair-ttl` 过期即失效；换回来的 Device Token 长期有效，
   落盘只有哈希，明文既不进数据库也不进日志。
 - 手机侧 `bridges` 表（schema v3；v2→v3 是单事务迁移，并在真机上彩排过「备份→降到 v2→
@@ -263,7 +279,7 @@ Windows PowerShell 5.1 会按 GBK(936) 读取无 BOM 文件，导致脚本里的
 logcat，并统计 `FATAL EXCEPTION`（有则退出码 1，可直接接进脚本）。
 
 ```powershell
-.\tools\dev.ps1 -NoBuild      # 只重启 + 看日志，不编译（改完 XML/资源时最快）
+.\tools\dev.ps1 -NoBuild      # 复用已安装版本，启动 + 看日志；代码或资源改动需重新编译
 .\tools\dev.ps1 -Follow       # 持续滚动日志，Ctrl+C 退出
 .\tools\dev.ps1 -ErrorsOnly   # 只看崩溃与错误
 ```

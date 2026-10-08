@@ -25,6 +25,8 @@ import java.util.Locale;
 public final class FingerprintPin {
 
     private final String fingerprint;
+    public static final String CERTIFICATE_PREFIX = "cert-sha256:";
+    private final boolean certificatePin;
 
     /**
      * @param fingerprint hex SHA-256 of a certificate's SPKI, as the offer carried it
@@ -33,10 +35,12 @@ public final class FingerprintPin {
      *         certificate on the network
      */
     public FingerprintPin(String fingerprint) {
-        if (fingerprint == null || !fingerprint.matches("^[0-9a-fA-F]{64}$")) {
+        certificatePin = fingerprint != null && fingerprint.startsWith(CERTIFICATE_PREFIX);
+        String digest = certificatePin ? fingerprint.substring(CERTIFICATE_PREFIX.length()) : fingerprint;
+        if (digest == null || !digest.matches("^[0-9a-fA-F]{64}$")) {
             throw new IllegalArgumentException("指纹不是一枚 SHA-256 摘要");
         }
-        this.fingerprint = fingerprint.toLowerCase(Locale.US);
+        this.fingerprint = (certificatePin ? CERTIFICATE_PREFIX : "") + digest.toLowerCase(Locale.US);
     }
 
     public String value() {
@@ -45,13 +49,22 @@ public final class FingerprintPin {
 
     /** The tail a person compares against the computer's terminal (A11). */
     public String tail() {
-        return ManualTarget.tailOf(fingerprint);
+        return ManualTarget.tailOf(certificatePin
+                ? fingerprint.substring(CERTIFICATE_PREFIX.length()) : fingerprint);
     }
 
     public boolean matches(Certificate certificate) {
-        byte[] digest = digestOf(certificate);
+        byte[] digest;
+        try {
+            digest = certificatePin && certificate != null
+                    ? MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded())
+                    : digestOf(certificate);
+        } catch (java.security.GeneralSecurityException exception) {
+            return false;
+        }
         return digest != null
-                && MessageDigest.isEqual(digest, hexToBytes(fingerprint));
+                && MessageDigest.isEqual(digest, hexToBytes(certificatePin
+                        ? fingerprint.substring(CERTIFICATE_PREFIX.length()) : fingerprint));
     }
 
     /** Null when the certificate carries no encodable public key. */

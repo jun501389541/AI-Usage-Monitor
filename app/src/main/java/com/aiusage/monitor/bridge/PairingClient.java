@@ -98,12 +98,29 @@ public final class PairingClient {
         private final Bridge bridge;
         private final String deviceToken;
         private final String deviceId;
+        private final String remoteAccountId;
+        private final String remoteAccountName;
+        private final Acknowledgement acknowledgement;
+
+        public interface Acknowledgement { void acknowledge() throws IOException; }
 
         Paired(Bridge bridge, String deviceId, String deviceToken) {
+            this(bridge, deviceId, deviceToken, "", "", () -> { });
+        }
+
+        Paired(Bridge bridge, String deviceId, String deviceToken, String remoteAccountId,
+               String remoteAccountName, Acknowledgement acknowledgement) {
             this.bridge = bridge;
             this.deviceId = deviceId;
             this.deviceToken = deviceToken;
+            this.remoteAccountId = remoteAccountId;
+            this.remoteAccountName = remoteAccountName;
+            this.acknowledgement = acknowledgement;
         }
+
+        public String remoteAccountId() { return remoteAccountId; }
+        public String remoteAccountName() { return remoteAccountName; }
+        public void acknowledge() throws IOException { acknowledgement.acknowledge(); }
 
         public Bridge bridge() {
             return bridge;

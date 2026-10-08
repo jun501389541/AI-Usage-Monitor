@@ -4,10 +4,15 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.res.ColorStateList;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,6 +24,7 @@ import android.text.InputType;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -28,6 +34,9 @@ import android.view.inputmethod.EditorInfo;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.ListView;
+import android.widget.AbsListView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -41,6 +50,7 @@ import com.aiusage.monitor.R;
 import com.aiusage.monitor.model.Balance;
 import com.aiusage.monitor.model.Account;
 import com.aiusage.monitor.model.Metric;
+import com.aiusage.monitor.model.QuotaWindow;
 import com.aiusage.monitor.model.UsageResult;
 import com.aiusage.monitor.util.QuotaWords;
 import com.aiusage.monitor.provider.AuthContext;
@@ -63,6 +73,9 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.TimeZone;
+import java.util.Collections;
+import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -162,7 +175,20 @@ public final class MainActivity extends Activity {
     private TextView bridgeAddressView;
     private TextView queryButton;
     private TextView statusView;
-    private TextView historyView;
+    private ListView historyList;
+    private RecentReadingsAdapter historyAdapter;
+    private boolean historyScrolling;
+    private List<RecentReadingsAdapter.Row> pendingHistoryRows;
+    private LinearLayout quotaContainer;
+    private TimeZone displayTimeZone = TimeZone.getTimeZone("Asia/Shanghai");
+    private List<QuotaWindow> displayedQuotaWindows = Collections.emptyList();
+    private final BroadcastReceiver timezoneReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String id = intent.getStringExtra("time-zone");
+            updateDisplayTimeZone(id == null ? TimeZone.getDefault() : TimeZone.getTimeZone(id));
+        }
+    };
 
     /**
      * True when this account's stored credential carries a usable Bridge address.
@@ -174,7 +200,7 @@ public final class MainActivity extends Activity {
 
     /** How far back the "recent readings" list looks, and how many it shows. */
     private static final long HISTORY_WINDOW_MS = 7L * 24L * 60L * 60L * 1000L;
-    private static final int HISTORY_ROWS = 10;
+    private static final int HISTORY_ROWS = 200;
     private TextView balanceView;
     private TextView todayUsageView;
     private TextView detailsView;
@@ -207,9 +233,12 @@ public final class MainActivity extends Activity {
         WidgetRefreshScheduler.scheduleMidnight(this);
         configureWindow();
         buildInterface();
+        registerReceiver(timezoneReceiver, new IntentFilter(Intent.ACTION_TIMEZONE_CHANGED));
         loadStoredCredential();
         updatePeakCard();
-        HolidayUpdater.updateIfNeeded(this, changed -> runOnUiThread(this::updatePeakCard));
+        if (!isBridgeAccount()) {
+            HolidayUpdater.updateIfNeeded(this, changed -> runOnUiThread(this::updatePeakCard));
+        }
     }
 
     /**
@@ -283,6 +312,10 @@ public final class MainActivity extends Activity {
         keyInput = null;
         rememberKey = null;
         bridgeAddressView = null;
+        peakTitleView = null;
+        peakRemainingView = null;
+        peakTimeView = null;
+        displayedQuotaWindows = Collections.emptyList();
 
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
@@ -412,10 +445,16 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         resultCard.addView(statusView, statusParams);
 
+        quotaContainer = new LinearLayout(this);
+        quotaContainer.setOrientation(LinearLayout.VERTICAL);
+        quotaContainer.setVisibility(View.GONE);
+        resultCard.addView(quotaContainer, matchWrap(0));
+
         LinearLayout balanceRow = new LinearLayout(this);
         balanceRow.setOrientation(LinearLayout.HORIZONTAL);
         balanceRow.setGravity(Gravity.CENTER_VERTICAL);
         resultCard.addView(balanceRow, matchWrap(16));
+        balanceRow.setVisibility(isBridge ? View.GONE : View.VISIBLE);
 
         LinearLayout balanceColumn = new LinearLayout(this);
         balanceColumn.setOrientation(LinearLayout.VERTICAL);
@@ -424,10 +463,7 @@ public final class MainActivity extends Activity {
         balanceView = text("—", 26, COLOR_TEXT, Typeface.BOLD);
         balanceView.setIncludeFontPadding(false);
         balanceView.setLetterSpacing(-0.02f);
-        // "CNY" is a DeepSeek fact: the Bridge reports no currency at all, so the
-        // caption under a permanent dash would name a currency this account has
-        // never had. The dash itself is the honest reading (A6/R5).
-        TextView balanceCaption = text(isBridge ? "余额" : "CNY 余额", 11, COLOR_HINT, Typeface.NORMAL);
+        TextView balanceCaption = text("CNY 余额", 11, COLOR_HINT, Typeface.NORMAL);
         balanceColumn.addView(balanceCaption, matchWrap(0));
 
         balanceColumn.addView(balanceView, matchWrap(4));
@@ -455,57 +491,105 @@ public final class MainActivity extends Activity {
         // history nobody can look at is the reason the reading API would
         // otherwise stay test-only.
         LinearLayout historyCard = card();
-        content.addView(historyCard, matchWrap(16));
 
         TextView historyLabel = text("最近读数", 11, COLOR_MUTED, Typeface.BOLD);
         historyLabel.setLetterSpacing(0.12f);
         historyCard.addView(historyLabel, matchWrap(0));
 
-        historyView = text("", 12, COLOR_MUTED, Typeface.NORMAL);
-        historyView.setLineSpacing(dp(3), 1.1f);
-        historyCard.addView(historyView, matchWrap(8));
+        historyScrolling = false;
+        pendingHistoryRows = null;
+        historyAdapter = new RecentReadingsAdapter(this, COLOR_MUTED);
+        historyList = new ListView(this);
+        historyList.setAdapter(historyAdapter);
+        historyList.setDivider(null);
+        historyList.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        historyList.setTranscriptMode(AbsListView.TRANSCRIPT_MODE_DISABLED);
+        historyList.setStackFromBottom(false);
+        historyList.setFocusable(false);
+        historyList.setFocusableInTouchMode(false);
+        historyList.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        historyList.setVerticalScrollBarEnabled(true);
+        historyList.setScrollbarFadingEnabled(false);
+        historyList.setScrollBarStyle(View.SCROLLBARS_INSIDE_INSET);
+        historyList.setContentDescription("最近读数，可上下滑动查看历史");
+        historyList.setOnScrollListener(new AbsListView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(AbsListView view, int state) {
+                historyScrolling = state != SCROLL_STATE_IDLE;
+                if (!historyScrolling && pendingHistoryRows != null) {
+                    List<RecentReadingsAdapter.Row> next = pendingHistoryRows;
+                    pendingHistoryRows = null;
+                    updateHistoryRows(next);
+                }
+            }
 
-        LinearLayout peakCard = card();
-        content.addView(peakCard, matchWrap(16));
+            @Override
+            public void onScroll(AbsListView view, int first, int visible, int total) { }
+        });
+        // Let this fixed-height region own vertical gestures instead of the
+        // surrounding page intercepting them. Page scrolling remains available
+        // outside the history region.
+        historyList.setOnTouchListener((v, event) -> {
+            int action = event.getActionMasked();
+            v.getParent().requestDisallowInterceptTouchEvent(
+                    action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
+            return false;
+        });
+        LinearLayout.LayoutParams historyParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(96));
+        historyParams.topMargin = dp(8);
+        historyCard.addView(historyList, historyParams);
+        historyCard.addView(text("最近 7 天 · 最多 200 条 · 上下滑动查看", 10,
+                COLOR_HINT, Typeface.NORMAL), matchWrap(8));
 
-        TextView peakLabel = text("谷峰时段", 11, COLOR_MUTED, Typeface.BOLD);
-        peakLabel.setLetterSpacing(0.12f);
-        peakCard.addView(peakLabel, matchWrap(0));
+        if (!isBridge) {
+            LinearLayout peakCard = card();
+            content.addView(peakCard, matchWrap(16));
 
-        LinearLayout peakStatusRow = new LinearLayout(this);
-        peakStatusRow.setOrientation(LinearLayout.HORIZONTAL);
-        peakStatusRow.setGravity(Gravity.CENTER_VERTICAL);
-        peakCard.addView(peakStatusRow, matchWrap(10));
+            TextView peakLabel = text("谷峰时段", 11, COLOR_MUTED, Typeface.BOLD);
+            peakLabel.setLetterSpacing(0.12f);
+            peakCard.addView(peakLabel, matchWrap(0));
 
-        peakTitleView = text("—", 20, COLOR_TEXT, Typeface.BOLD);
-        peakStatusRow.addView(peakTitleView, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            LinearLayout peakStatusRow = new LinearLayout(this);
+            peakStatusRow.setOrientation(LinearLayout.HORIZONTAL);
+            peakStatusRow.setGravity(Gravity.CENTER_VERTICAL);
+            peakCard.addView(peakStatusRow, matchWrap(10));
 
-        LinearLayout remainingColumn = new LinearLayout(this);
-        remainingColumn.setOrientation(LinearLayout.VERTICAL);
-        remainingColumn.setGravity(Gravity.END);
-        remainingColumn.setMinimumWidth(dp(92));
-        peakStatusRow.addView(remainingColumn, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+            peakTitleView = text("—", 20, COLOR_TEXT, Typeface.BOLD);
+            peakStatusRow.addView(peakTitleView, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView remainingLabel = text("剩余时间", 11, COLOR_MUTED, Typeface.NORMAL);
-        remainingLabel.setGravity(Gravity.END);
-        remainingColumn.addView(remainingLabel, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+            LinearLayout remainingColumn = new LinearLayout(this);
+            remainingColumn.setOrientation(LinearLayout.VERTICAL);
+            remainingColumn.setGravity(Gravity.END);
+            remainingColumn.setMinimumWidth(dp(92));
+            peakStatusRow.addView(remainingColumn, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        peakRemainingView = text("", 20, COLOR_MUTED, Typeface.BOLD);
-        peakRemainingView.setGravity(Gravity.END);
-        peakRemainingView.setSingleLine(true);
-        peakRemainingView.setMinWidth(dp(92));
-        LinearLayout.LayoutParams remainingParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        remainingParams.topMargin = dp(2);
-        remainingColumn.addView(peakRemainingView, remainingParams);
+            TextView remainingLabel = text("剩余时间", 11, COLOR_MUTED, Typeface.NORMAL);
+            remainingLabel.setGravity(Gravity.END);
+            remainingColumn.addView(remainingLabel, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        peakTimeView = text("", 11, COLOR_HINT, Typeface.NORMAL);
-        peakCard.addView(peakTimeView, matchWrap(4));
+            peakRemainingView = text("", 20, COLOR_MUTED, Typeface.BOLD);
+            peakRemainingView.setGravity(Gravity.END);
+            peakRemainingView.setSingleLine(true);
+            peakRemainingView.setMinWidth(dp(92));
+            LinearLayout.LayoutParams remainingParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            remainingParams.topMargin = dp(2);
+            remainingColumn.addView(peakRemainingView, remainingParams);
+
+            peakTimeView = text("", 11, COLOR_HINT, Typeface.NORMAL);
+            peakCard.addView(peakTimeView, matchWrap(4));
+        }
+
+        // Every provider shares the same bounded, scrollable history card.
+        // DeepSeek places it after its peak/off-peak information; providers
+        // without that information place it directly after their usage card.
+        content.addView(historyCard, matchWrap(16));
 
         // Both sentences name DeepSeek and a key that only it accepts. Shown as-is
         // on a Codex account they would claim the app talks to api.deepseek.com on
@@ -836,18 +920,14 @@ public final class MainActivity extends Activity {
      * manners.
      */
     private void renderRecentReadings() {
-        if (account == null || historyView == null) {
+        if (account == null || historyList == null) {
             return;
         }
         long now = System.currentTimeMillis();
         List<UsageSnapshot> readings = usageRepository.history(account.getId(),
                 now - HISTORY_WINDOW_MS, now + 1L, HISTORY_ROWS);
-        if (readings.isEmpty()) {
-            historyView.setText("还没有读数记录");
-            return;
-        }
         SimpleDateFormat time = new SimpleDateFormat("HH:mm", Locale.getDefault());
-        StringBuilder lines = new StringBuilder();
+        List<RecentReadingsAdapter.Row> rows = new ArrayList<>();
         for (int index = 0; index < readings.size(); index++) {
             UsageSnapshot reading = readings.get(index);
             UsageResult result = reading.toUsageResult();
@@ -855,9 +935,10 @@ public final class MainActivity extends Activity {
             // percentages for Codex. Reading only the balance here put an em dash
             // beside the time of every successful Codex reading.
             String balance = ReadingWords.value(result);
-            if (lines.length() > 0) {
-                lines.append('\n');
+            if (isBridgeAccount() && result != null && !result.getQuotaWindows().isEmpty()) {
+                balance = QuotaWords.remainingCompact(result.getQuotaWindows());
             }
+            StringBuilder lines = new StringBuilder();
             lines.append(time.format(new Date(reading.getTimestamp()))).append(" · ").append(balance);
             if (!reading.isSuccess()) {
                 lines.append(" · 查询失败");
@@ -875,8 +956,94 @@ public final class MainActivity extends Activity {
                     }
                 }
             }
+            rows.add(new RecentReadingsAdapter.Row(reading.getId(), lines.toString()));
         }
-        historyView.setText(lines.toString());
+        updateHistoryRows(rows);
+    }
+
+    private void updateHistoryRows(List<RecentReadingsAdapter.Row> rows) {
+        if (historyScrolling) {
+            pendingHistoryRows = rows;
+            return;
+        }
+        int first = historyList.getFirstVisiblePosition();
+        View firstRow = historyList.getChildAt(0);
+        int top = firstRow == null ? 0 : firstRow.getTop();
+        boolean atTop = first == 0 && top >= 0;
+        long anchorId = historyAdapter.getItemId(Math.min(first, historyAdapter.getCount() - 1));
+        if (!historyAdapter.submit(rows)) {
+            return;
+        }
+        int target = atTop ? 0 : historyAdapter.positionOf(anchorId);
+        if (target < 0) {
+            target = Math.min(first, historyAdapter.getCount() - 1);
+        }
+        // A new row prepended by refresh must not replace the older row being
+        // read. At the top, keep showing the newest reading instead.
+        historyList.setSelectionFromTop(target, atTop ? 0 : top);
+    }
+
+    private void updateDisplayTimeZone(TimeZone timezone) {
+        if (timezone == null || displayTimeZone.getID().equals(timezone.getID())) {
+            return;
+        }
+        displayTimeZone = timezone;
+        if (quotaContainer != null && quotaContainer.getVisibility() == View.VISIBLE
+                && !displayedQuotaWindows.isEmpty()) {
+            renderQuotaWindows(displayedQuotaWindows);
+        }
+    }
+
+    private void renderQuotaWindows(List<QuotaWindow> windows) {
+        displayedQuotaWindows = windows == null ? Collections.emptyList() : windows;
+        quotaContainer.removeAllViews();
+        if (!isBridgeAccount() || windows == null || windows.isEmpty()) {
+            quotaContainer.setVisibility(View.GONE);
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (QuotaWindow window : windows) {
+            if (window == null) {
+                continue;
+            }
+            int remaining = (int) Math.round(Math.max(0d, Math.min(100d, window.getRemainingPercent())));
+            String label = window.getLabel().isEmpty() ? window.getId() : window.getLabel();
+            String title = window.getWindowMinutes() == 7L * 24L * 60L && "7 天".equals(label)
+                    ? "每周限额" : label + "限额";
+            LinearLayout heading = new LinearLayout(this);
+            heading.setOrientation(LinearLayout.HORIZONTAL);
+            heading.addView(text(title, 13, COLOR_TEXT, Typeface.BOLD),
+                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView percent = text("剩余 " + remaining + "%", 13, COLOR_TEXT, Typeface.BOLD);
+            percent.setGravity(Gravity.END);
+            heading.addView(percent, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            quotaContainer.addView(heading, matchWrap(16));
+
+            ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            LayerDrawable drawable = new LayerDrawable(new android.graphics.drawable.Drawable[]{
+                    roundRect(COLOR_STATUS, 0, 4, 0),
+                    new ClipDrawable(roundRect(COLOR_TEXT, 0, 4, 0), Gravity.LEFT, ClipDrawable.HORIZONTAL)});
+            drawable.setId(0, android.R.id.background);
+            drawable.setId(1, android.R.id.progress);
+            bar.setProgressDrawable(drawable);
+            bar.setMax(100);
+            bar.setProgress(remaining);
+            bar.setContentDescription(title + "，剩余 " + remaining + "%");
+            LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(8));
+            barParams.topMargin = dp(8);
+            quotaContainer.addView(bar, barParams);
+            TextView reset = text(QuotaWords.resetSummary(window.getResetAt(), now, displayTimeZone), 11,
+                    COLOR_MUTED, Typeface.NORMAL);
+            reset.setSingleLine(true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                reset.setAutoSizeTextTypeUniformWithConfiguration(8, 11, 1,
+                        android.util.TypedValue.COMPLEX_UNIT_SP);
+            }
+            quotaContainer.addView(reset, matchWrap(6));
+        }
+        quotaContainer.setVisibility(quotaContainer.getChildCount() == 0 ? View.GONE : View.VISIBLE);
     }
 
     private void showBalance(UsageResult result) {
@@ -901,12 +1068,16 @@ public final class MainActivity extends Activity {
         statusView.setBackground(roundRect(COLOR_STATUS, COLOR_BORDER, 99, 1));
         balanceView.setText(totalDisplay);
         todayUsageView.setText(todayUsage);
+        renderQuotaWindows(result.getQuotaWindows());
         // Quota windows are the only reading a Codex account has, so they go on
         // screen whenever the result carries any - and nowhere when it does not,
         // rather than as a heading over an empty block. The wording itself is
         // decided in QuotaWords so it can be tested without a device.
         String quotaLines = QuotaWords.lines(result.getQuotaWindows(), System.currentTimeMillis());
-        if (quotaLines.isEmpty()) {
+        if (isBridgeAccount() && quotaContainer.getChildCount() == 0) {
+            detailsView.setVisibility(View.VISIBLE);
+            detailsView.setText("本次未返回额度窗口");
+        } else if (isBridgeAccount() || quotaLines.isEmpty()) {
             detailsView.setVisibility(View.GONE);
         } else {
             detailsView.setVisibility(View.VISIBLE);
@@ -932,6 +1103,8 @@ public final class MainActivity extends Activity {
         statusView.setBackground(roundRect(COLOR_STATUS, COLOR_BORDER, 99, 1));
         balanceView.setText("—");
         todayUsageView.setText("—");
+        quotaContainer.removeAllViews();
+        quotaContainer.setVisibility(View.GONE);
         detailsView.setVisibility(View.VISIBLE);
         detailsView.setText(message);
         renderRecentReadings();
@@ -955,6 +1128,8 @@ public final class MainActivity extends Activity {
             statusView.setTextColor(COLOR_MUTED);
             balanceView.setText("…");
             todayUsageView.setText("…");
+            // Keep the previous quota card in place while refreshing, so the
+            // history region does not collapse and move during each request.
             detailsView.setVisibility(View.GONE);
             detailsView.setText("");
         } else {
@@ -1065,6 +1240,9 @@ public final class MainActivity extends Activity {
     }
 
     private void scheduleSecondTick() {
+        if (isBridgeAccount()) {
+            return;
+        }
         long now = SystemClock.uptimeMillis();
         handler.postAtTime(secondTickRunnable, now + (1000L - (now % 1000L)));
     }
@@ -1113,6 +1291,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        updateDisplayTimeZone(TimeZone.getDefault());
         // The foreground owns refreshing while it is visible; the alarm is
         // re-armed in onPause.
         WidgetRefreshScheduler.cancel(this);
@@ -1136,6 +1315,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        unregisterReceiver(timezoneReceiver);
         executor.shutdownNow();
         super.onDestroy();
     }

@@ -100,6 +100,7 @@ public final class CodexProvider implements UsageProvider {
         return dataSource.fetch(authContext.get(AuthContext.KEY_BRIDGE_URL),
                 authContext.get(AuthContext.KEY_DEVICE_TOKEN),
                 authContext.get(AuthContext.KEY_BRIDGE_PIN),
-                account.getId(), System.currentTimeMillis());
+                account.getId(), System.currentTimeMillis(),
+                authContext.get(AuthContext.KEY_REMOTE_ACCOUNT_ID));
     }
 }

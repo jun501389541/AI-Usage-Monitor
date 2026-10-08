@@ -51,6 +51,7 @@ public final class AuthContext {
      * pairing, which is Phase 6's behaviour and stays plaintext.
      */
     public static final String KEY_BRIDGE_PIN = "bridgePin";
+    public static final String KEY_REMOTE_ACCOUNT_ID = "remoteAccountId";
 
     private final AuthType authType;
     private final Map<String, String> values;

@@ -7,6 +7,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.TimeZone;
 
 /**
  * The wording for quota windows - the only reading a Codex account has.
@@ -65,6 +66,71 @@ public final class QuotaWords {
             return "今天 " + clock + " 重置";
         }
         return new SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(new Date(resetAtMs)) + " 重置";
+    }
+
+    /** Time until reset, independent of the device's timezone. */
+    public static String resetCountdown(long resetAtMs, long nowMs) {
+        if (resetAtMs <= 0L) {
+            return RESET_UNKNOWN;
+        }
+        if (resetAtMs <= nowMs) {
+            return RESET_DUE;
+        }
+        long difference = resetAtMs - nowMs;
+        long minutes = difference / 60_000L + (difference % 60_000L == 0L ? 0L : 1L);
+        long days = minutes / (24L * 60L);
+        long hours = minutes / 60L % 24L;
+        if (days > 0L) {
+            return days + " 天" + (hours > 0L ? " " + hours + " 小时" : "") + "后重置";
+        }
+        long remainder = minutes % 60L;
+        if (hours > 0L) {
+            return hours + " 小时" + (remainder > 0L ? " " + remainder + " 分钟" : "") + "后重置";
+        }
+        return minutes + " 分钟后重置";
+    }
+
+    /** China is the fallback until a device timezone has been resolved. */
+    public static String resetSummary(long resetAtMs, long nowMs) {
+        return resetSummary(resetAtMs, nowMs, TimeZone.getTimeZone("Asia/Shanghai"));
+    }
+
+    public static String resetSummary(long resetAtMs, long nowMs, TimeZone timezone) {
+        if (resetAtMs <= 0L) {
+            return RESET_UNKNOWN;
+        }
+        TimeZone zone = timezone == null ? TimeZone.getTimeZone("Asia/Shanghai") : timezone;
+        Date reset = new Date(resetAtMs);
+        SimpleDateFormat momentFormat = new SimpleDateFormat("MM-dd HH:mm", Locale.CHINA);
+        momentFormat.setTimeZone(zone);
+        SimpleDateFormat offsetFormat = new SimpleDateFormat("XXX", Locale.US);
+        offsetFormat.setTimeZone(zone);
+        String offset = offsetFormat.format(reset);
+        if ("Z".equals(offset)) {
+            offset = "+00:00";
+        }
+        String zoneLabel = "Asia/Shanghai".equals(zone.getID()) ? "" : " (UTC" + offset + ")";
+        return resetCountdown(resetAtMs, nowMs).replace(" ", "")
+                + " · " + momentFormat.format(reset) + zoneLabel;
+    }
+
+    /** Remaining quota for a history row; explicitly names the percentage meaning. */
+    public static String remainingCompact(List<QuotaWindow> windows) {
+        if (windows == null || windows.isEmpty()) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        for (QuotaWindow window : windows) {
+            if (window == null) {
+                continue;
+            }
+            if (text.length() > 0) {
+                text.append(" · ");
+            }
+            String label = window.getLabel().isEmpty() ? window.getId() : window.getLabel();
+            text.append(label).append(" 剩余 ").append(clamped(window.getRemainingPercent())).append('%');
+        }
+        return text.toString();
     }
 
     /**

@@ -404,10 +404,17 @@ func lanAddress(t *testing.T) string {
 	}
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
-		if !ok || ipnet.IP.IsLoopback() {
+		if !ok || ipnet.IP.IsLoopback() || ipnet.IP.IsLinkLocalUnicast() {
 			continue
 		}
 		if ip4 := ipnet.IP.To4(); ip4 != nil {
+			// Windows can enumerate stale virtual-adapter addresses that cannot
+			// actually be bound. These tests need a usable LAN interface.
+			listener, err := net.Listen("tcp", net.JoinHostPort(ip4.String(), "0"))
+			if err != nil {
+				continue
+			}
+			_ = listener.Close()
 			return ip4.String()
 		}
 	}

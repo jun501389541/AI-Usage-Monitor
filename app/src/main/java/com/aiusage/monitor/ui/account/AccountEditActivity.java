@@ -252,23 +252,13 @@ public final class AccountEditActivity extends Activity {
         // at all: it pins the certificate, keeps the address in one row that can be
         // edited when the laptop moves networks, and stores the device token in the
         // same encrypted credential this form already writes.
-        TextView pairButton = UiKit.actionButton(this, "与电脑配对（推荐）", true);
-        pairButton.setContentDescription("与电脑配对");
-        pairButton.setOnClickListener(view -> {
-            android.content.Intent pairing = new android.content.Intent(this,
-                    com.aiusage.monitor.ui.pair.PairActivity.class);
-            // On an account that already exists this is 「重新配对」: the token on the
-            // computer was revoked, and what has to survive is this account - its
-            // history and its widget slots. Without the id the pairing screen would add
-            // a second account for the same computer and leave this one reading
-            // 「还没有与这台电脑配对」 forever.
-            if (account != null) {
-                pairing.putExtra(com.aiusage.monitor.ui.pair.PairActivity.EXTRA_ACCOUNT_ID,
-                        account.getId());
-            }
-            startActivityForResult(pairing, REQUEST_PAIR);
-        });
+        TextView pairButton = UiKit.actionButton(this, "扫码连接电脑（推荐）", true);
+        pairButton.setContentDescription("扫码连接电脑");
+        pairButton.setOnClickListener(view -> openPairing(true));
         bridgeCard.addView(pairButton, UiKit.matchHeight(this, 50, 10));
+        TextView otherPairing = UiKit.actionButton(this, "其它配对方式", false);
+        otherPairing.setOnClickListener(view -> openPairing(false));
+        bridgeCard.addView(otherPairing, UiKit.matchHeight(this, 44, 8));
 
         bridgeCard.addView(label("或直接手输地址（调试通道）"), UiKit.matchWrap(this, 12));
 
@@ -585,6 +575,19 @@ public final class AccountEditActivity extends Activity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    private void openPairing(boolean scan) {
+        android.content.Intent pairing = new android.content.Intent(this,
+                com.aiusage.monitor.ui.pair.PairActivity.class);
+        pairing.putExtra(com.aiusage.monitor.ui.pair.PairActivity.EXTRA_START_SCAN, scan);
+        pairing.putExtra(com.aiusage.monitor.ui.pair.PairActivity.EXTRA_ACCOUNT_NAME,
+                nameInput.getText().toString());
+        if (account != null) {
+            pairing.putExtra(com.aiusage.monitor.ui.pair.PairActivity.EXTRA_ACCOUNT_ID,
+                    account.getId());
+        }
+        startActivityForResult(pairing, REQUEST_PAIR);
     }
 
     /**

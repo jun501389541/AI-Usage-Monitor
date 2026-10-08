@@ -36,7 +36,7 @@ import java.util.concurrent.Executor;
 /**
  * The pairing screen. Phase 7 step 9, Spec §20-§22.
  *
- * <p>The two channels are separated by more than layout. A pasted or link-delivered
+ * <p>The channels are separated by more than layout. A scanned, pasted or link-delivered
  * offer carries the certificate digest, so its connection is pinned before anything is
  * sent. A typed address and short code carry no digest, so this screen has to show the
  * one it found and get a person to say 「that is my computer」 before the code leaves
@@ -57,8 +57,11 @@ public final class PairActivity extends Activity {
      */
     public static final String EXTRA_ACCOUNT_ID = "accountId";
     public static final String EXTRA_BRIDGE_ID = "bridgeId";
+    public static final String EXTRA_START_SCAN = "startScan";
+    public static final String EXTRA_ACCOUNT_NAME = "accountName";
+    private static final int REQUEST_SCAN = 51;
 
-    private final Executor network = Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.ExecutorService network = Executors.newSingleThreadExecutor();
 
     private EditText offerInput;
     private EditText hostInput;
@@ -71,6 +74,7 @@ public final class PairActivity extends Activity {
 
     private PairingClient.Discovered discovered;
     private String rebindAccountId;
+    private String accountName;
     private volatile boolean busy;
 
     @Override
@@ -81,9 +85,62 @@ public final class PairActivity extends Activity {
         if (startedBy != null) {
             String candidate = startedBy.getStringExtra(EXTRA_ACCOUNT_ID);
             rebindAccountId = candidate == null || candidate.trim().isEmpty() ? null : candidate;
+            accountName = startedBy.getStringExtra(EXTRA_ACCOUNT_NAME);
         }
         buildInterface();
         arriveByLink(getIntent());
+        if (savedInstanceState == null && startedBy != null
+                && startedBy.getBooleanExtra(EXTRA_START_SCAN, false)
+                && !Intent.ACTION_VIEW.equals(startedBy.getAction())) {
+            openScanner();
+        }
+    }
+
+    private void openScanner() {
+        if (!busy) {
+            startActivityForResult(new Intent(this, QrScanActivity.class), REQUEST_SCAN);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SCAN && resultCode == RESULT_OK && data != null) {
+            pairText(data.getStringExtra(QrScanActivity.EXTRA_QR_CONTENT), true);
+        }
+    }
+
+    private void pairText(String content, boolean scanned) {
+        if (content != null && content.trim().startsWith("https://")) {
+            if (busy) return;
+            busy = true;
+            say("正在向电脑申请配对…");
+            network.execute(() -> {
+                try {
+                    com.aiusage.monitor.bridge.LauncherInvitation invitation =
+                            com.aiusage.monitor.bridge.LauncherInvitation.parse(content);
+                    com.aiusage.monitor.bridge.LauncherPairingClient client =
+                            new com.aiusage.monitor.bridge.LauncherPairingClient(
+                                    com.aiusage.monitor.bridge.DeviceProfile.addresses());
+                    store(client.pair(invitation, deviceName(),
+                            message -> runOnUiThread(() -> { if (!isDestroyed()) say(message); })));
+                } catch (InterruptedException cancelled) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception failed) {
+                    fail(failed instanceof javax.net.ssl.SSLException
+                            ? "电脑证书与二维码指纹不一致，连接已中止。"
+                            : failed.getMessage() == null ? "配对失败，请检查电脑共享设置。" : failed.getMessage());
+                }
+            });
+        } else {
+            startPairing(scanned ? TextOfferSource.fromQrCode(content) : TextOfferSource.fromPaste(content));
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        network.shutdownNow();
+        super.onDestroy();
     }
 
     @Override
@@ -115,6 +172,20 @@ public final class PairActivity extends Activity {
         page.addView(UiKit.text(this, "让这台手机认识你的电脑；额度是从它身上读的。",
                 13, UiKit.COLOR_MUTED, Typeface.NORMAL), UiKit.matchWrap(this, 6));
 
+        LinearLayout scanCard = UiKit.card(this);
+        scanCard.addView(UiKit.text(this, "扫码连接电脑", 18,
+                UiKit.COLOR_TEXT, Typeface.BOLD), UiKit.matchWrap(this, 0));
+        scanCard.addView(UiKit.text(this,
+                "手机和电脑连接同一个 Wi-Fi。在电脑端打开“添加设备”，然后扫描配对二维码。",
+                13, UiKit.COLOR_MUTED, Typeface.NORMAL), UiKit.matchWrap(this, 8));
+        TextView scanButton = UiKit.actionButton(this, "扫描电脑上的二维码", true);
+        scanButton.setOnClickListener(view -> openScanner());
+        scanCard.addView(scanButton, UiKit.matchHeight(this, 50, 12));
+        statusView = UiKit.text(this, "", 13, UiKit.COLOR_MUTED, Typeface.NORMAL);
+        statusView.setGravity(Gravity.CENTER_HORIZONTAL);
+        scanCard.addView(statusView, UiKit.matchWrap(this, 12));
+        page.addView(scanCard, UiKit.matchWrap(this, 16));
+
         // -------------------------------------------------- channel: the whole offer
         LinearLayout offerCard = UiKit.card(this);
         offerCard.addView(label("从电脑复制的配对内容"), UiKit.matchWrap(this, 0));
@@ -131,7 +202,7 @@ public final class PairActivity extends Activity {
         TextView offerButton = UiKit.actionButton(this, "用这份内容配对", true);
         offerButton.setContentDescription("用粘贴的配对内容配对");
         offerButton.setOnClickListener(view ->
-                startPairing(TextOfferSource.fromPaste(offerInput.getText().toString())));
+                pairText(offerInput.getText().toString(), false));
         offerCard.addView(offerButton, UiKit.matchHeight(this, 50, 12));
         offerCard.addView(UiKit.text(this,
                 "电脑端执行 --add-device 会打印这串内容，从终端整段复制过来即可。",
@@ -174,10 +245,6 @@ public final class PairActivity extends Activity {
         confirmRow.addView(pairButton, UiKit.matchHeight(this, 50, 8));
         manualCard.addView(confirmRow, UiKit.matchWrap(this, 4));
         page.addView(manualCard, UiKit.matchWrap(this, 16));
-
-        statusView = UiKit.text(this, "", 13, UiKit.COLOR_MUTED, Typeface.NORMAL);
-        statusView.setGravity(Gravity.CENTER_HORIZONTAL);
-        page.addView(statusView, UiKit.matchWrap(this, 14));
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(page, new ScrollView.LayoutParams(
@@ -339,14 +406,21 @@ public final class PairActivity extends Activity {
 
     /** The pairing worked; now make it survive in storage. */
     private void store(PairingClient.Paired paired) {
+        if (Thread.currentThread().isInterrupted() || isDestroyed()) return;
         try {
             PairingStore pairing = AppGraph.get(this).pairingStore();
             // An account came in with this intent, so this is a re-pairing of that
             // account and not a new one: rebind keeps the id, the history and the slots.
             PairingStore.Stored stored = rebindAccountId == null
-                    ? pairing.record(paired, CodexProvider.ID, paired.bridge().getName())
+                    ? pairing.record(paired, CodexProvider.ID,
+                            accountName == null || accountName.trim().isEmpty()
+                                    ? paired.remoteAccountName().isEmpty() ? paired.bridge().getName()
+                                            : paired.remoteAccountName() : accountName.trim())
                     : pairing.rebind(paired, rebindAccountId);
+            paired.acknowledge();
             succeeded(stored);
+        } catch (java.io.IOException failed) {
+            fail("账户已保存，但电脑未收到完成回执，请检查连接后在该账户重新配对。");
         } catch (PairingStore.NotStored notStored) {
             fail(notStored.getMessage());
         } catch (AuthException exception) {

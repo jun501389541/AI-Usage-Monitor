@@ -276,6 +276,7 @@ public final class AccountRefreshManager {
             }
             java.util.Map<String, String> values = new java.util.HashMap<>();
             values.put(AuthContext.KEY_DEVICE_TOKEN, authContext.get(AuthContext.KEY_DEVICE_TOKEN));
+            values.put(AuthContext.KEY_REMOTE_ACCOUNT_ID, authContext.get(AuthContext.KEY_REMOTE_ACCOUNT_ID));
             values.put(AuthContext.KEY_BRIDGE_URL, bridge.getBaseUrl());
             values.put(AuthContext.KEY_BRIDGE_PIN, bridge.getFingerprint());
             authContext = AuthContext.of(account.getAuthType(), values);
@@ -413,7 +414,7 @@ public final class AccountRefreshManager {
      * is what made a deleted-key account still read "账户可用" while its newest
      * snapshot was AUTH_REQUIRED.
      */
-    public static final class AccountView {
+    public static final class AccountView extends AccountRefreshView {
         public AccountView(UsageResult lastSuccess, UsageResult lastAttempt) {
             super(lastSuccess, lastAttempt);
         }

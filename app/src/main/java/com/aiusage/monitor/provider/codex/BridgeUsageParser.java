@@ -48,6 +48,7 @@ public final class BridgeUsageParser {
 
     public static UsageResult parse(String body, String accountId, long nowMs) throws UsageException {
         JSONObject root = readObject(body);
+        if (root.has("schemaVersion")) return parseLauncher(root, accountId, nowMs);
 
         JSONObject state = root.optJSONObject("state");
         if (state == null) {
@@ -102,6 +103,61 @@ public final class BridgeUsageParser {
                 UsageResult.METRIC_ACCOUNT_AVAILABLE, "账户可用", 1d, ""));
 
         return builder.build();
+    }
+
+    private static UsageResult parseLauncher(JSONObject root, String accountId, long nowMs)
+            throws UsageException {
+        if (root.optInt("schemaVersion", -1) != 1 || !PROVIDER_ID.equals(root.optString("providerId"))) {
+            throw new UsageException(UsageError.UNKNOWN, "电脑端额度格式或版本不支持。");
+        }
+        String state = root.optString("status", "NO_DATA");
+        UsageStatus status;
+        switch (state) {
+            case "OK": status = UsageStatus.OK; break;
+            case "STALE": status = UsageStatus.STALE; break;
+            case "AUTH_REQUIRED": status = UsageStatus.BRIDGE_AUTH_REQUIRED; break;
+            case "NETWORK_ERROR": status = UsageStatus.NETWORK_ERROR; break;
+            case "NO_DATA": case "UNSUPPORTED": status = UsageStatus.NO_DATA; break;
+            default: throw new UsageException(UsageError.UNKNOWN, "电脑端额度状态无法识别。");
+        }
+        if (root.optBoolean("isStale", false) && status == UsageStatus.OK) status = UsageStatus.STALE;
+        UsageResult.Builder builder = UsageResult.builder().accountId(accountId).providerId(PROVIDER_ID)
+                .status(status).updatedAt(timestamp(root.optString("updatedAt"), nowMs))
+                .source(UsageResult.Source.BRIDGE);
+        JSONArray windows = root.optJSONArray("quotaWindows");
+        int count = 0;
+        if (windows != null) {
+            for (int i = 0; i < windows.length(); i++) {
+                JSONObject raw = windows.optJSONObject(i);
+                if (raw == null || (raw.isNull("usedPercent") && raw.isNull("remainingPercent"))) continue;
+                double used = raw.isNull("usedPercent") ? 100 - raw.optDouble("remainingPercent", Double.NaN)
+                        : raw.optDouble("usedPercent", Double.NaN);
+                double remaining = raw.isNull("remainingPercent") ? 100 - used
+                        : raw.optDouble("remainingPercent", Double.NaN);
+                if (!Double.isFinite(used) || !Double.isFinite(remaining)
+                        || used < 0 || used > 100 || remaining < 0 || remaining > 100) {
+                    throw new UsageException(UsageError.UNKNOWN, "电脑端额度百分比无效。");
+                }
+                builder.addQuotaWindow(new QuotaWindow(raw.optString("id"), raw.optString("label"),
+                        used, remaining, raw.optLong("windowMinutes", 0),
+                        timestamp(raw.optString("resetAt"), 0)));
+                count++;
+            }
+        }
+        if (count == 0 && (status == UsageStatus.OK || status == UsageStatus.STALE)) {
+            throw new UsageException(UsageError.UNKNOWN, "电脑端没有可用额度窗口。");
+        }
+        builder.addMetric(new Metric(UsageResult.METRIC_ACCOUNT_AVAILABLE, "账户可用",
+                status == UsageStatus.OK || status == UsageStatus.STALE ? 1 : 0, ""));
+        return builder.build();
+    }
+
+    private static long timestamp(String iso, long fallback) throws UsageException {
+        if (iso == null || iso.isEmpty() || "null".equals(iso)) return fallback;
+        try { return java.time.Instant.parse(iso).toEpochMilli(); }
+        catch (java.time.DateTimeException invalid) {
+            throw new UsageException(UsageError.UNKNOWN, "电脑端时间格式无效。");
+        }
     }
 
     /**

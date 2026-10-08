@@ -110,6 +110,8 @@ public final class BridgeTls {
             throw new IOException("这个地址不是 HTTPS 服务：" + url);
         }
         HttpsURLConnection connection = (HttpsURLConnection) raw;
+        // Pairing/session/device credentials must stay on the pinned invitation endpoint.
+        connection.setInstanceFollowRedirects(false);
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
         connection.setRequestProperty("Accept", "application/json");

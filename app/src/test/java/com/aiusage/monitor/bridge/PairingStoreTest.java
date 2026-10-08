@@ -98,7 +98,9 @@ public class PairingStoreTest {
 
         AuthContext opened = accountManager.openCredential(account);
         assertEquals("dt-secret-token-value", opened.get(AuthContext.KEY_DEVICE_TOKEN));
-        assertEquals("https://192.168.1.20:38411", opened.get(AuthContext.KEY_BRIDGE_URL));
+        assertFalse("paired credentials must not duplicate the bridge endpoint",
+                opened.has(AuthContext.KEY_BRIDGE_URL));
+        assertEquals("https://192.168.1.20:38411", row.getBaseUrl());
     }
 
     @Test
@@ -269,8 +271,9 @@ public class PairingStoreTest {
         assertEquals("电脑", rebound.account().getDisplayName());
         assertEquals("dt-new", accountManager.openCredential(rebound.account())
                 .get(AuthContext.KEY_DEVICE_TOKEN));
-        assertEquals("https://192.168.1.30:38411", accountManager.openCredential(rebound.account())
-                .get(AuthContext.KEY_BRIDGE_URL));
+        assertFalse("rebinding keeps the endpoint exclusively in the bridge row",
+                accountManager.openCredential(rebound.account()).has(AuthContext.KEY_BRIDGE_URL));
+        assertEquals("https://192.168.1.30:38411", bridges.findById("br_alphaalpha").getBaseUrl());
         assertEquals(1, bridges.count());
     }
 

@@ -3,19 +3,23 @@
 # Dot-source it before any gradle / adb / emulator command:
 #     . .\tools\env.ps1
 #
-# This is the ONLY tracked file that contains machine-specific paths, and it is
-# the single place to edit when moving to another machine. local.properties
-# (gitignored) holds the SDK path for Gradle itself.
+# Existing environment variables take precedence over the legacy D:\Android
+# defaults. local.properties (gitignored) can also hold the SDK path for Gradle.
 
 $ErrorActionPreference = "Stop"
 
-$AndroidRoot = "D:\Android"
-
-$env:JAVA_HOME          = Join-Path $AndroidRoot "jdk-17"
-$env:ANDROID_HOME       = Join-Path $AndroidRoot "sdk"
-$env:ANDROID_SDK_ROOT   = $env:ANDROID_HOME
-$env:ANDROID_AVD_HOME   = Join-Path $AndroidRoot ".android\avd"
-$env:GRADLE_USER_HOME   = Join-Path $AndroidRoot ".gradle"
+if (-not $env:ANDROID_HOME -and $env:ANDROID_SDK_ROOT) {
+    $env:ANDROID_HOME = $env:ANDROID_SDK_ROOT
+}
+$AndroidRoot = if ($env:ANDROID_HOME) { Split-Path -Parent $env:ANDROID_HOME } else { "D:\Android" }
+if (-not $env:JAVA_HOME) { $env:JAVA_HOME = Join-Path $AndroidRoot "jdk-17" }
+if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = Join-Path $AndroidRoot "sdk" }
+if (-not $env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME }
+if (-not $env:ANDROID_AVD_HOME) {
+    $legacyAvd = Join-Path $AndroidRoot ".android\avd"
+    if (Test-Path $legacyAvd) { $env:ANDROID_AVD_HOME = $legacyAvd }
+}
+if (-not $env:GRADLE_USER_HOME) { $env:GRADLE_USER_HOME = Join-Path $AndroidRoot ".gradle" }
 
 # JDK first so `java` resolves for Gradle's launcher and for adb tooling.
 $jdkBin = Join-Path $env:JAVA_HOME "bin"

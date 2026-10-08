@@ -64,6 +64,26 @@ public final class CredentialPayload {
         }
     }
 
+    public static String forRemoteDevice(String token, String accountId) throws AuthException {
+        if (accountId == null || accountId.isEmpty()) return forDeviceToken(token);
+        if (!accountId.matches("[0-9a-f]{64}")) {
+            throw new AuthException(UsageError.INVALID_CREDENTIAL, "远端账户标识无效");
+        }
+        try {
+            return new JSONObject(forDeviceToken(token)).put("remoteAccountId", accountId).toString();
+        } catch (JSONException failed) {
+            throw new AuthException(UsageError.UNKNOWN, "无法保存远端账户标识", failed);
+        }
+    }
+
+    public static String extractRemoteAccountId(String payload) throws AuthException {
+        String id = parse(payload).optString("remoteAccountId", "");
+        if (!id.isEmpty() && !id.matches("[0-9a-f]{64}")) {
+            throw new AuthException(UsageError.INVALID_CREDENTIAL, "远端账户标识无效");
+        }
+        return id;
+    }
+
     /**
      * Builds {@code {"deviceToken":"…","bridgeUrl":"…"}}.
      *

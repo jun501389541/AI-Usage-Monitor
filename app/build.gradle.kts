@@ -26,6 +26,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -47,8 +48,9 @@ android {
 }
 
 dependencies {
-    // Production code has ZERO third-party dependencies (Spec §1).
-    // The two below are test-only and never enter the APK.
+    // Embedded QR scanning works offline and does not require another scanner app.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     testImplementation(libs.junit)
     testImplementation(libs.org.json)
 }

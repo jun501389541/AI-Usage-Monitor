@@ -78,7 +78,9 @@ public class BridgeQueryPathWiringTest {
         assertEquals("the kicker names DeepSeek in exactly one branch",
                 1, count(source, "\"DEEPSEEK API\""));
         assertEquals("the balance caption must not hard-code CNY for every account",
-                1, count(source, "text(isBridge ? \"余额\" : \"CNY 余额\""));
+                1, count(source, "text(\"CNY 余额\""));
+        assertTrue("Codex must hide the balance and daily currency row",
+                source.contains("balanceRow.setVisibility(isBridge ? View.GONE : View.VISIBLE);"));
         assertEquals("the query button label comes from queryLabel(), not from a literal",
                 1, count(source, "\"查询余额\""));
         assertTrue("both labels must be produced by the same branch",
@@ -92,8 +94,12 @@ public class BridgeQueryPathWiringTest {
     public void autoRefreshGateUsesThePerProviderRule() throws IOException {
         String source = read();
 
-        assertEquals("both the second-tick gate and onResume must ask canQueryNow()",
-                2, count(source, "if (!loading && canQueryNow())"));
+        assertEquals("the automatic callback must ask canQueryNow()",
+                1, count(source, "if (!loading && canQueryNow())"));
+        assertTrue("onResume must respect manual-only mode and the provider gate",
+                source.contains("if (refreshIntervalMs != RefreshPolicy.MANUAL_ONLY && !loading && canQueryNow())"));
+        assertTrue("queued automatic callbacks must also respect manual-only mode",
+                source.contains("if (isFinishing() || refreshIntervalMs == RefreshPolicy.MANUAL_ONLY)"));
         assertTrue("the gate reads the Bridge address, not the key field, for a Bridge account",
                 source.contains("return bridgeConfigured;"));
         assertEquals("the key field may be the gate only on the DeepSeek path",

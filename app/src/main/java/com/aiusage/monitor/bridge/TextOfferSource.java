@@ -2,12 +2,11 @@ package com.aiusage.monitor.bridge;
 
 /**
  * An offer that arrived as text: the deep link the system hands the pairing
- * activity, or something the user pasted. Both are "a string came in", so both live
+ * activity, something the user pasted, or a scanned QR offer. All carry text and live
  * here, and the Android half (the intent, the clipboard) stays in the activity where
  * the {@code Context} is — this class takes the text and nothing else.
  *
- * <p>The two differ only in what they call themselves, and that difference is worth
- * two types rather than a parameter: the label is what the pairing screen shows as
+ * <p>Each factory supplies its own label: the label is what the pairing screen shows as
  * the chosen channel, and a user who pasted should not be told they arrived by link.
  */
 public final class TextOfferSource implements PairingPayloadSource {
@@ -28,6 +27,10 @@ public final class TextOfferSource implements PairingPayloadSource {
     /** Whatever the user pasted, including the bare tail without the prefix. */
     public static TextOfferSource fromPaste(String pasted) {
         return new TextOfferSource("粘贴的配对内容", pasted);
+    }
+
+    public static TextOfferSource fromQrCode(String scanned) {
+        return new TextOfferSource("扫描的配对二维码", scanned);
     }
 
     @Override

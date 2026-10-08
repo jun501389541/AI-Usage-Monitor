@@ -28,6 +28,7 @@ public final class BridgeAuthAdapter implements AuthAdapter {
         values.put(AuthContext.KEY_DEVICE_TOKEN,
                 CredentialPayload.extractOptionalDeviceToken(decryptedPayload));
         values.put(AuthContext.KEY_BRIDGE_URL, CredentialPayload.extractBridgeUrl(decryptedPayload));
+        values.put(AuthContext.KEY_REMOTE_ACCOUNT_ID, CredentialPayload.extractRemoteAccountId(decryptedPayload));
         return AuthContext.of(AuthType.BRIDGE_TOKEN, values);
     }
 
@@ -45,5 +46,6 @@ public final class BridgeAuthAdapter implements AuthAdapter {
         // would connect somewhere before anything authorises it. Spec §53 rule 22.
         CredentialPayload.extractBridgeUrl(decryptedPayload);
         CredentialPayload.extractOptionalDeviceToken(decryptedPayload);
+        CredentialPayload.extractRemoteAccountId(decryptedPayload);
     }
 }

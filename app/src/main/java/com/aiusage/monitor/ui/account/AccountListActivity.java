@@ -25,6 +25,8 @@ import com.aiusage.monitor.account.AccountManager;
 import com.aiusage.monitor.model.Balance;
 import com.aiusage.monitor.model.Account;
 import com.aiusage.monitor.model.UsageResult;
+import com.aiusage.monitor.model.QuotaWindow;
+import com.aiusage.monitor.provider.codex.CodexProvider;
 import com.aiusage.monitor.refresh.AccountRefreshManager;
 import com.aiusage.monitor.ui.MainActivity;
 import com.aiusage.monitor.ui.UiKit;
@@ -271,6 +273,11 @@ public final class AccountListActivity extends Activity {
 
     private String balanceText(Account account) {
         UsageResult result = usageRepository.latest(account.getId());
+        if (CodexProvider.ID.equals(account.getProviderId())) {
+            QuotaWindow weekly = weeklyWindow(result);
+            return weekly == null ? Money.EMPTY
+                    : Math.round(Math.max(0d, Math.min(100d, weekly.getRemainingPercent()))) + "%";
+        }
         if (result == null || result.getBalance() == null) {
             return Money.EMPTY;
         }
@@ -279,6 +286,9 @@ public final class AccountListActivity extends Activity {
 
     private String usageText(Account account) {
         UsageResult result = usageRepository.latest(account.getId());
+        if (CodexProvider.ID.equals(account.getProviderId())) {
+            return result != null && weeklyWindow(result) == null ? "未提供每周额度" : "每周剩余";
+        }
         if (result == null) {
             return "今日 " + Money.EMPTY;
         }
@@ -290,6 +300,17 @@ public final class AccountListActivity extends Activity {
                 usageRepository.dailyUsage(account.getId()),
                 balance == null ? "" : balance.getCurrency(),
                 balance != null);
+    }
+
+    private static QuotaWindow weeklyWindow(UsageResult result) {
+        if (result != null) {
+            for (QuotaWindow window : result.getQuotaWindows()) {
+                if (window != null && window.getWindowMinutes() == 7L * 24L * 60L) {
+                    return window;
+                }
+            }
+        }
+        return null;
     }
 
     /**

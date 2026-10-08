@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
@@ -50,10 +53,9 @@
         <!--
             Phase 7: the pairing screen. Exported because the second channel is a
             link the system delivers - the computer's terminal prints
-            aiusage://pair#… and tapping it must open this screen. It takes no
-            permission and shows no account data: an offer the user did not choose
-            to open still only pairs a computer after a person confirms the
-            fingerprint on this screen (docs/PHASE-7-PLAN.md A11).
+            aiusage://pair#… and tapping it opens this screen. Full offers pin
+            the certificate before sending the pairing token; manual addresses
+            require fingerprint confirmation. Camera access lives in QrScanActivity.
         -->
         <activity
             android:name="com.aiusage.monitor.ui.pair.PairActivity"
@@ -68,6 +70,11 @@
                 <data android:scheme="aiusage" android:host="pair" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="com.aiusage.monitor.ui.pair.QrScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:label="扫码连接电脑" />
         <activity
             android:name="com.aiusage.monitor.ui.bridge.BridgeListActivity"
             android:exported="false"
