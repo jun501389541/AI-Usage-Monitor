@@ -13,10 +13,10 @@ android {
         applicationId = "com.aiusage.monitor"
         minSdk = 23
         targetSdk = 35
-        // Bumped for the Phase 1 architecture rewrite. Phase 0 carried the
-        // upstream baseline verbatim: --version-code 56 --version-name "3.32".
-        versionCode = 57
-        versionName = "4.0.0"
+        // Code 57 was shared by the Phase 1 rewrite and Phase 2 multi-account work;
+        // Phase 0 carried the upstream baseline verbatim: --version-code 56 --version-name "3.32".
+        versionCode = 58
+        versionName = "4.1.0"
     }
 
     buildTypes {

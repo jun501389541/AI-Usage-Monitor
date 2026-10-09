@@ -24,6 +24,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"aiusage.local/bridge/internal/filestore"
@@ -111,8 +112,9 @@ type Store struct {
 	now func() time.Time
 }
 
-// NewStore loads path, treating a *missing* file as an empty registry: first run
-// is normal. Anything else that is not usable is reported rather than discarded,
+// NewStore loads path, treating a *missing* file or a non-directory parent as an
+// empty registry: first run is normal. Anything else that is not usable is
+// reported rather than discarded,
 // because starting over silently revokes every paired phone and the phone reads
 // that as a network problem. That includes a zero-length file: a truncation or a
 // half-restored backup is exactly what a "treat empty as new" rule mistakes for a
@@ -120,7 +122,7 @@ type Store struct {
 func NewStore(path string) (*Store, error) {
 	s := &Store{path: path, now: time.Now}
 	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return s, nil
 	}
 	if err != nil {

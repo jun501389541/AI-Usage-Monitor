@@ -11,7 +11,7 @@ Phase 4（历史快照的区间读取与保留策略）、Phase 5（Windows AI U
 MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）、Phase 7（手机与电脑配对：
 三种引入通道、SPKI 指纹钉定与逐连接主机名校验、`bridges` 表、配对与设备界面）**。应用名
 `AI Usage Monitor`，包名 / applicationId `com.aiusage.monitor`
-（`versionCode 57` / `versionName 4.0.0`）。手机现已接入二维码配对。
+（`versionCode 58` / `versionName 4.1.0`）。手机现已接入二维码配对。
 局域网自动发现、Direct OAuth、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸尚未开始。
 
 ## 当前功能
@@ -34,6 +34,7 @@ MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）、Phase 7（手机与
 - **历史读数**：每次成功与失败都落 `usage_snapshots`；账户详情页显示「最近读数」（时间、余额、与上次的差值、失败标记）
 - **保留策略**：明细快照保留 14 天，日粒度事实由 `daily_usage` 长期保留；清理永不删除某账户的「最后一次成功读数」与「最新一行」，因此不会把 Widget 清成空白
 - **OpenAI Codex 账户**：账户可选 DeepSeek 或 Codex。Codex 数据由电脑端额度桥提供；列表显示每周剩余额度，详情页显示额度条、剩余重置时间及具体时间点。支持展示重置卡次数、类型及到期日期，并区分未返回与格式无效；此功能只读取状态，不兑换卡片。
+- **通知设置**：DeepSeek 按工作日峰谷时段切换提醒；Codex 按 5 小时和每周额度的预计重置时间提醒，并可为每个 Codex 账户单独开关。
 - **失败态按来源分开**：Bridge 未连接、电脑端授权已失效、当前 Codex 不支持此查询是三句话三种状态，不会互相冒充（Codex 账户不会被告知「API Key 无效」，它没有 API Key）。
 - 一键进入 `https://platform.deepseek.com/`
 - 可选“记住密钥”，仅保存在应用私有存储中
@@ -372,7 +373,7 @@ logcat，并统计 `FATAL EXCEPTION`（有则退出码 1，可直接接进脚本
   沙箱按包名隔离应用私有存储，包名变了就是另一个应用。若未来要提供旧数据导入，
   需要另行设计（如导出/导入文件或桥接方案），并单独验收；当前没有这个功能。
 - 不要将 API Key 分享给他人；如密钥泄露，请立即在开放平台删除并重新创建。
-- 当前 APK 使用 Android 调试证书签名，适合个人安装使用。
+- v4.1.0 可安装 APK 使用本机 Android 调试证书签名，适合个人安装，不是应用商店正式签名；覆盖安装后续版本时必须使用同一签名密钥。
 
 ## 版本沿革
 
@@ -385,5 +386,6 @@ logcat，并统计 `FATAL EXCEPTION`（有则退出码 1，可直接接进脚本
 | 4.0.0（code 57） | Phase 3：Widget 改为账户 Slot 模型（`widget_slots` 表，schema v2），4×2 三 Slot Dashboard，显示更新时间与状态，Widget 内手动刷新；每 Slot 的指标选择仍待后续 |
 | 4.0.0（code 57） | Phase 4：历史按账户 + 时间窗口读取（左闭右开），账户详情页「最近读数」，快照 14 天保留策略（永不删最后成功与最新一行） |
 | 4.0.0（code 57） | Phase 5：Windows AI Usage Bridge（独立 Go module）——经 `codex app-server` 读 5 小时 / 周额度与重置时间，缓存 5 分钟，失败保留旧数据，只对本机提供 `/v1/*`；不读 Codex 凭据，Android 侧零改动 |
+| 4.1.0（code 58） | DeepSeek 峰谷时段通知、Codex 5 小时 / 每周额度重置提醒及账户单独开关；Codex 重置卡信息与诊断、二维码配对和账户 / 已配对电脑页面优化 |
 
 Phase 1 与 Phase 2 共用了 `versionCode 57`——两个阶段都未发布，未单独递增版本号。
