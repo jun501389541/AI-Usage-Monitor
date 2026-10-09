@@ -1,6 +1,7 @@
 package com.aiusage.monitor.widget;
 
 import com.aiusage.monitor.model.UsageStatus;
+import com.aiusage.monitor.model.QuotaWindow;
 
 import java.util.Collections;
 import java.util.List;
@@ -45,8 +46,23 @@ public final class WidgetSlotView {
     /** False when the slot has no account and its row should be hidden entirely. */
     public final boolean visible;
 
+    public final boolean quotaAccount;
+    public final boolean hasQuotaReading;
+    public final QuotaWindow fiveHour;
+    public final QuotaWindow weekly;
+
     WidgetSlotView(int slotIndex, String accountId, String title, List<String> valueLines,
                    String footer, UsageStatus status, boolean visible) {
+        this(slotIndex, accountId, title, valueLines, footer, status, visible, false, false, null, null);
+    }
+
+    WidgetSlotView(int slotIndex, String accountId, String title, List<String> valueLines,
+                   String footer, UsageStatus status, boolean visible, boolean quotaAccount,
+                   boolean hasQuotaReading, QuotaWindow fiveHour, QuotaWindow weekly) {
+        this.quotaAccount = quotaAccount;
+        this.hasQuotaReading = hasQuotaReading;
+        this.fiveHour = fiveHour;
+        this.weekly = weekly;
         this.slotIndex = slotIndex;
         this.accountId = accountId == null ? "" : accountId;
         this.title = title == null ? "" : title;

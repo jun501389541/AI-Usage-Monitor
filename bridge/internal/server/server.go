@@ -263,14 +263,10 @@ func checkAdvertised(advertise, served []string, host string) error {
 	return nil
 }
 
-// sameAddress folds the loopback spellings together: "localhost", 127.0.0.1 and
-// ::1 all reach a client on this machine, and refusing an offer because the
-// operator spelled loopback differently would be checking a formality.
+// An IPv4 loopback listener does not also serve IPv6 loopback. Only advertise
+// the address actually served; localhost resolution is not a listener contract.
 func sameAddress(a, b string) bool {
-	if a == b {
-		return true
-	}
-	return allowedHosts[a] && allowedHosts[b]
+	return a == b
 }
 
 // Advertised is the address list a pairing offer carries, after it has been

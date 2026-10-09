@@ -311,9 +311,12 @@ public final class AccountRefreshManager {
                         renewed.toCredentialPayload())) {
                     return RefreshOutcome.abandoned(accountId);
                 }
-                generation = accountManager.credentialGeneration(accountId);
-                account = accountManager.find(accountId);
-                if (account == null) return RefreshOutcome.abandoned(accountId);
+                // Rotation owns exactly the next generation, not a later user authorization.
+                generation++;
+                synchronized (accountManager.writeMonitor()) {
+                    if (isVoid(accountId, generation)) return RefreshOutcome.abandoned(accountId);
+                    account = accountManager.find(accountId);
+                }
                 direct = renewed.toAuthContext();
             } catch (AuthException renewalFailure) {
                 return directFailedThenBridge(account, generation,
@@ -331,9 +334,12 @@ public final class AccountRefreshManager {
                                                   UsageError directError, String directMessage,
                                                   boolean recordDirectFailure) {
         String accountId = account.getId();
-        if (directError == UsageError.AUTH_EXPIRED || directError == UsageError.INVALID_CREDENTIAL
-                || directError == UsageError.PERMISSION_DENIED) {
-            accountManager.setDirectNeedsAuth(accountId, true);
+        synchronized (accountManager.writeMonitor()) {
+            if (isVoid(accountId, generation)) return RefreshOutcome.abandoned(accountId);
+            if (directError == UsageError.AUTH_EXPIRED || directError == UsageError.INVALID_CREDENTIAL
+                    || directError == UsageError.PERMISSION_DENIED) {
+                accountManager.setDirectNeedsAuth(accountId, true);
+            }
         }
         boolean hasBridge = account.getAuthType() == AuthType.BRIDGE_TOKEN
                 && account.getCredentialId() != null && !account.getCredentialId().isEmpty();

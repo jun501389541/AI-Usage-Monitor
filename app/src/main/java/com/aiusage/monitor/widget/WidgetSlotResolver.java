@@ -3,6 +3,8 @@ package com.aiusage.monitor.widget;
 import com.aiusage.monitor.model.Account;
 import com.aiusage.monitor.model.UsageResult;
 import com.aiusage.monitor.model.UsageStatus;
+import com.aiusage.monitor.model.QuotaWindow;
+import com.aiusage.monitor.provider.codex.CodexProvider;
 import com.aiusage.monitor.provider.ProviderCapabilities;
 import com.aiusage.monitor.refresh.AccountRefreshManager;
 import com.aiusage.monitor.util.Freshness;
@@ -152,7 +154,16 @@ public final class WidgetSlotResolver {
                 ? StatusWords.NEVER_QUERIED
                 : Freshness.describe(shown.getUpdatedAt(), nowMs) + SEPARATOR
                         + StatusWords.describe(status, view.showingRetainedData());
-        return new WidgetSlotView(index, account.getId(), title, lines, footer, status, true);
+        boolean quota = CodexProvider.ID.equals(account.getProviderId());
+        QuotaWindow fiveHour = null;
+        QuotaWindow weekly = null;
+        // Durations identify windows; primary/secondary ordering is not a contract.
+        if (quota && view.lastSuccess != null) {
+            fiveHour = com.aiusage.monitor.util.CodexQuotaWindows.find(view.lastSuccess.getQuotaWindows(), 300L);
+            weekly = com.aiusage.monitor.util.CodexQuotaWindows.find(view.lastSuccess.getQuotaWindows(), 10080L);
+        }
+        return new WidgetSlotView(index, account.getId(), title, lines, footer, status, true,
+                quota, quota && view.lastSuccess != null, fiveHour, weekly);
     }
 
     private static String value(String metricId, Account account, UsageResult success,

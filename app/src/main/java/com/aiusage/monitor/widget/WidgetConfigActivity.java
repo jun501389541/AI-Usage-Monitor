@@ -22,6 +22,8 @@ import com.aiusage.monitor.AppGraph;
 import com.aiusage.monitor.account.AccountManager;
 import com.aiusage.monitor.model.Account;
 import com.aiusage.monitor.model.UsageResult;
+import com.aiusage.monitor.model.QuotaWindow;
+import com.aiusage.monitor.provider.codex.CodexProvider;
 import com.aiusage.monitor.refresh.AccountRefreshManager;
 import com.aiusage.monitor.ui.UiKit;
 import com.aiusage.monitor.usage.UsageRepository;
@@ -172,7 +174,7 @@ public final class WidgetConfigActivity extends Activity {
         content.addView(choiceContainer, UiKit.matchWrap(this, 12));
 
         TextView noAccounts = UiKit.text(this,
-                "还没有账户。请先在应用里添加一个 DeepSeek API Key，再回来选择。",
+                "还没有账户。请先在应用里添加账户，再回来选择。",
                 13, UiKit.COLOR_MUTED, Typeface.NORMAL);
         noAccounts.setGravity(Gravity.CENTER);
         noAccounts.setLineSpacing(UiKit.dp(this, 4), 1.2f);
@@ -219,9 +221,9 @@ public final class WidgetConfigActivity extends Activity {
 
     private String subtitleText() {
         if (capacity > 1) {
-            return "按点选顺序排列，最多 " + capacity + " 个账户。这个 Widget 会显示所选账户的余额与今日用量。";
+            return "按点选顺序排列，最多 " + capacity + " 个账户。这个 Widget 会显示所选账户的余额用量或剩余额度。";
         }
-        return "这个 Widget 将显示所选账户的余额与今日用量。";
+        return "这个 Widget 将显示所选账户的余额用量或剩余额度。";
     }
 
     private void applyInsets(View root) {
@@ -369,6 +371,17 @@ public final class WidgetConfigActivity extends Activity {
 
     private String balanceText(Account account) {
         UsageResult result = usageRepository.latest(account.getId());
+        if (CodexProvider.ID.equals(account.getProviderId())) {
+            if (result != null) {
+                QuotaWindow window = com.aiusage.monitor.util.CodexQuotaWindows.find(result.getQuotaWindows(), 10080L);
+                if (window != null && window.getWindowMinutes() == 10080L
+                        && !Double.isNaN(window.getRemainingPercent())
+                        && !Double.isInfinite(window.getRemainingPercent())) {
+                    return "每周剩余 " + Math.round(Math.max(0, Math.min(100, window.getRemainingPercent()))) + "%";
+                }
+            }
+            return result == null ? Money.EMPTY : "未提供每周额度";
+        }
         if (result == null || result.getBalance() == null) {
             return Money.EMPTY;
         }

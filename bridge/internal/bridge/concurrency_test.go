@@ -62,7 +62,13 @@ func TestLateFailureCannotEraseAConcurrentSuccess(t *testing.T) {
 
 	first := make(chan error, 1)
 	go func() { _, err := svc.Usage(true); first <- err }()
-	<-f.inFirst // the first request has loaded the state and is inside Codex
+	select {
+	case <-f.inFirst:
+	case err := <-first:
+		t.Fatalf("first request failed before fetching: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first request did not reach the fetcher")
+	}
 
 	second := make(chan View, 1)
 	go func() { v, _ := svc.Usage(true); second <- v }()
@@ -83,8 +89,14 @@ func TestLateFailureCannotEraseAConcurrentSuccess(t *testing.T) {
 	if err := <-first; err == nil {
 		t.Fatal("the latched fetch was meant to fail")
 	}
-	<-f.inSecond
-	view := <-second
+	// A storage error can return before entering the second fetch. Waiting on
+	// inSecond alone would hang the suite rather than report that failure.
+	var view View
+	select {
+	case view = <-second:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second request did not complete")
+	}
 	if !view.State.HasData() {
 		t.Fatal("the second request served no numbers")
 	}

@@ -17,7 +17,9 @@ public final class CodexResetPlanner {
     public static List<Event> events(List<QuotaWindow> windows) {
         Map<Long, MutableEvent> byMinute = new TreeMap<>();
         if (windows != null) {
-            for (QuotaWindow window : windows) {
+            for (QuotaWindow window : java.util.Arrays.asList(
+                    com.aiusage.monitor.util.CodexQuotaWindows.find(windows, 300L),
+                    com.aiusage.monitor.util.CodexQuotaWindows.find(windows, 10080L))) {
                 if (window == null || window.getResetAt() <= 0) continue;
                 String category;
                 if (window.getWindowMinutes() == 300) category = FIVE_HOUR;

@@ -372,11 +372,7 @@ public final class AccountListActivity extends Activity {
 
     private static QuotaWindow weeklyWindow(UsageResult result) {
         if (result != null) {
-            for (QuotaWindow window : result.getQuotaWindows()) {
-                if (window != null && window.getWindowMinutes() == 7L * 24L * 60L) {
-                    return window;
-                }
-            }
+            return com.aiusage.monitor.util.CodexQuotaWindows.find(result.getQuotaWindows(), 10080L);
         }
         return null;
     }

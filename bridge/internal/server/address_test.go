@@ -112,9 +112,10 @@ func TestAnAdvertisedAddressMustBeOneTheBindServes(t *testing.T) {
 		{"10.20.30.40:38411", []string{"198.51.100.7"}, true, "198.51.100.7", ""},
 		{"10.20.30.40:38411", []string{"10.20.30.40"}, false, "", "10.20.30.40"},
 		{"10.20.30.40:38411", []string{"127.0.0.1"}, false, "", "127.0.0.1"},
-		// The loopback spellings mean the same listener; refusing an offer because
-		// someone spelled it differently would be checking a formality.
-		{"localhost:38411", []string{"127.0.0.1"}, false, "", "127.0.0.1"},
+		// Different loopback spellings may resolve to different address families.
+		{"localhost:38411", []string{"127.0.0.1"}, true, "does not serve", ""},
+		{"127.0.0.1:38411", []string{"::1"}, true, "does not serve", ""},
+		{"[::1]:38411", []string{"127.0.0.1"}, true, "does not serve", ""},
 		// A wildcard bind serves the machine's addresses only, so an address from
 		// somewhere else is still unreachable and still refused.
 		{"0.0.0.0:38411", []string{"198.51.100.7"}, true, "198.51.100.7", ""},

@@ -32,7 +32,7 @@ public final class NotificationScheduler {
 
     private NotificationScheduler() { }
 
-    public static void reconcile(Context context) {
+    public static synchronized void reconcile(Context context) {
         Context app = context.getApplicationContext();
         AppGraph graph = AppGraph.get(app);
         NotificationSettings settings = new NotificationSettings(graph.settings());
