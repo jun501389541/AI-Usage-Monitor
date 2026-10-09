@@ -43,6 +43,8 @@ public final class UsageResult {
     private final Balance balance;
     private final List<QuotaWindow> quotaWindows;
     private final List<Metric> metrics;
+    private final LimitResetCredits limitResetCredits;
+    private final LimitResetCreditsStatus limitResetCreditsStatus;
     private final UsageStatus status;
     private final long updatedAt;
     private final Source source;
@@ -53,6 +55,8 @@ public final class UsageResult {
         this.balance = builder.balance;
         this.quotaWindows = Collections.unmodifiableList(new ArrayList<>(builder.quotaWindows));
         this.metrics = Collections.unmodifiableList(new ArrayList<>(builder.metrics));
+        this.limitResetCredits = builder.limitResetCredits;
+        this.limitResetCreditsStatus = builder.limitResetCreditsStatus;
         this.status = builder.status;
         this.updatedAt = builder.updatedAt;
         this.source = builder.source;
@@ -80,6 +84,12 @@ public final class UsageResult {
     public List<Metric> getMetrics() {
         return metrics;
     }
+
+    /** Null means the provider did not supply usable reset information. */
+    public LimitResetCredits getLimitResetCredits() { return limitResetCredits; }
+
+    /** Nullable for providers without reset credits or before a Bridge query. */
+    public LimitResetCreditsStatus getLimitResetCreditsStatus() { return limitResetCreditsStatus; }
 
     public UsageStatus getStatus() {
         return status;
@@ -135,6 +145,8 @@ public final class UsageResult {
                 .balance(balance)
                 .quotaWindows(quotaWindows)
                 .metrics(metrics)
+                .limitResetCredits(limitResetCredits)
+                .limitResetCreditsStatus(limitResetCreditsStatus)
                 .status(status)
                 .updatedAt(updatedAt)
                 .source(source);
@@ -147,6 +159,18 @@ public final class UsageResult {
         private Balance balance;
         private List<QuotaWindow> quotaWindows = new ArrayList<>();
         private List<Metric> metrics = new ArrayList<>();
+        private LimitResetCredits limitResetCredits;
+        private LimitResetCreditsStatus limitResetCreditsStatus;
+
+        public Builder limitResetCredits(LimitResetCredits value) {
+            this.limitResetCredits = value;
+            return this;
+        }
+
+        public Builder limitResetCreditsStatus(LimitResetCreditsStatus value) {
+            this.limitResetCreditsStatus = value;
+            return this;
+        }
         private UsageStatus status = UsageStatus.OK;
         private long updatedAt = System.currentTimeMillis();
         private Source source = Source.DIRECT_API;

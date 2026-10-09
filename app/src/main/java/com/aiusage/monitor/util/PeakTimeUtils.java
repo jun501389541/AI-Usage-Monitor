@@ -45,12 +45,8 @@ public final class PeakTimeUtils {
         String nextText;
         if (sameDate(now, next)) {
             nextText = String.format(Locale.US, "%02d:%02d 后进入高峰时段", next.get(Calendar.HOUR_OF_DAY), next.get(Calendar.MINUTE));
-        } else if (isTomorrow(now, next)) {
-            nextText = "明天 09:00 后进入高峰时段";
-        } else if (isWorkday(context, now) && minutes < 9 * 60) {
-            nextText = "09:00 后进入高峰时段";
         } else {
-            nextText = String.format(Locale.US, "%d月%d日 09:00 后进入高峰时段", next.get(Calendar.MONTH) + 1, next.get(Calendar.DAY_OF_MONTH));
+            nextText = dateKey(next) + " 09:00 后进入高峰时段";
         }
         return new Status(false, "空闲时段", "按高峰价格的 50% 计费", currentTime, nextText, formatRemaining(next.getTimeInMillis() - now.getTimeInMillis()));
     }
@@ -103,12 +99,6 @@ public final class PeakTimeUtils {
     private static boolean sameDate(Calendar first, Calendar second) {
         return first.get(Calendar.YEAR) == second.get(Calendar.YEAR)
                 && first.get(Calendar.DAY_OF_YEAR) == second.get(Calendar.DAY_OF_YEAR);
-    }
-
-    private static boolean isTomorrow(Calendar now, Calendar next) {
-        Calendar tomorrow = (Calendar) now.clone();
-        tomorrow.add(Calendar.DAY_OF_YEAR, 1);
-        return sameDate(tomorrow, next);
     }
 
     private static String dateKey(Calendar calendar) {

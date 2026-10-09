@@ -57,6 +57,7 @@ public final class SqliteAccountRepository implements AccountRepository {
         values.put("credential_id", account.getCredentialId());
         values.put("bridge_id", account.getBridgeId());
         values.put("enabled", account.isEnabled() ? 1 : 0);
+        values.put("pinned", account.isPinned() ? 1 : 0);
         values.put("sort_order", account.getSortOrder());
         values.put("created_at", account.getCreatedAt());
         values.put("updated_at", account.getUpdatedAt());
@@ -113,11 +114,11 @@ public final class SqliteAccountRepository implements AccountRepository {
         try (Cursor cursor = database.getReadableDatabase().query(
                 Database.TABLE_ACCOUNTS,
                 new String[]{"id", "provider_id", "display_name", "auth_type", "credential_id",
-                        "bridge_id", "enabled", "sort_order", "created_at", "updated_at"},
+                        "bridge_id", "enabled", "pinned", "sort_order", "created_at", "updated_at"},
                 selection,
                 args,
                 null, null,
-                "sort_order ASC, created_at ASC")) {
+                "pinned DESC, sort_order ASC, created_at ASC")) {
             while (cursor.moveToNext()) {
                 accounts.add(new Account.Builder()
                         .id(cursor.getString(0))
@@ -127,9 +128,10 @@ public final class SqliteAccountRepository implements AccountRepository {
                         .credentialId(cursor.getString(4))
                         .bridgeId(cursor.getString(5))
                         .enabled(cursor.getInt(6) == 1)
-                        .sortOrder(cursor.getInt(7))
-                        .createdAt(cursor.getLong(8))
-                        .updatedAt(cursor.getLong(9))
+                        .pinned(cursor.getInt(7) == 1)
+                        .sortOrder(cursor.getInt(8))
+                        .createdAt(cursor.getLong(9))
+                        .updatedAt(cursor.getLong(10))
                         .build());
             }
         }

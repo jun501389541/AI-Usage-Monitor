@@ -2,6 +2,8 @@ package com.aiusage.monitor.usage;
 
 import com.aiusage.monitor.model.Balance;
 import com.aiusage.monitor.model.Metric;
+import com.aiusage.monitor.model.LimitResetCredits;
+import com.aiusage.monitor.model.LimitResetCreditsStatus;
 import com.aiusage.monitor.model.QuotaWindow;
 import com.aiusage.monitor.model.UsageResult;
 import com.aiusage.monitor.model.UsageStatus;
@@ -61,6 +63,13 @@ public final class UsageSnapshotCodec {
             }
             root.put("quotaWindows", windows);
 
+            if (result.getLimitResetCredits() != null) {
+                root.put("rateLimitResetCredits", LimitResetCreditsJson.encode(result.getLimitResetCredits()));
+            }
+            if (result.getLimitResetCreditsStatus() != null) {
+                root.put("rateLimitResetCreditsStatus", result.getLimitResetCreditsStatus().name());
+            }
+
             JSONArray metrics = new JSONArray();
             for (Metric metric : result.getMetrics()) {
                 JSONObject json = new JSONObject();
@@ -86,12 +95,15 @@ public final class UsageSnapshotCodec {
         try {
             JSONObject root = new JSONObject(json);
 
+            LimitResetCredits resets = LimitResetCreditsJson.decode(root.optJSONObject("rateLimitResetCredits"));
             UsageResult.Builder builder = UsageResult.builder()
                     .accountId(root.optString("accountId", ""))
                     .providerId(root.optString("providerId", ""))
                     .status(parseStatus(root.optString("status", "")))
                     .updatedAt(root.optLong("updatedAt", 0L))
-                    .source(parseSource(root.optString("source", "")));
+                    .source(parseSource(root.optString("source", "")))
+                    .limitResetCredits(resets)
+                    .limitResetCreditsStatus(parseResetCreditsStatus(root, resets));
 
             JSONObject balance = root.optJSONObject("balance");
             if (balance != null) {
@@ -153,5 +165,17 @@ public final class UsageSnapshotCodec {
         } catch (IllegalArgumentException exception) {
             return UsageResult.Source.CACHE;
         }
+    }
+
+    private static LimitResetCreditsStatus parseResetCreditsStatus(JSONObject root, LimitResetCredits resets) {
+        if (root.has("rateLimitResetCreditsStatus")) {
+            try {
+                return LimitResetCreditsStatus.valueOf(root.optString("rateLimitResetCreditsStatus", ""));
+            } catch (IllegalArgumentException invalid) {
+                return LimitResetCreditsStatus.INVALID_FORMAT;
+            }
+        }
+        if (!"codex".equals(root.optString("providerId", ""))) return null;
+        return resets == null ? LimitResetCreditsStatus.LEGACY_BRIDGE : LimitResetCreditsStatus.AVAILABLE;
     }
 }

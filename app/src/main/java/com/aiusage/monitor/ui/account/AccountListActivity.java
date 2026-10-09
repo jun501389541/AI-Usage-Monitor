@@ -20,6 +20,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.recyclerview.widget.ItemTouchHelper;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
 import com.aiusage.monitor.AppGraph;
 import com.aiusage.monitor.account.AccountManager;
 import com.aiusage.monitor.model.Balance;
@@ -63,8 +67,9 @@ public final class AccountListActivity extends Activity {
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
-    private AccountAdapter adapter;
-    private LinearLayout listContainer;
+    private SwipeAccountAdapter adapter;
+    private RecyclerView listRecyclerView;
+    private ItemTouchHelper itemTouchHelper;
     private TextView emptyView;
     private TextView refreshAllButton;
     private boolean refreshing;
@@ -118,19 +123,84 @@ public final class AccountListActivity extends Activity {
         title.setIncludeFontPadding(false);
         content.addView(title, UiKit.matchWrap(this, 8));
 
-        TextView subtitle = UiKit.text(this, "管理多个 DeepSeek 账户，余额与用量彼此独立", 14,
+        TextView subtitle = UiKit.text(this, "管理多个 AI 账户，额度与用量彼此独立", 14,
                 UiKit.COLOR_MUTED, Typeface.NORMAL);
         subtitle.setLineSpacing(0f, 1.15f);
         content.addView(subtitle, UiKit.matchWrap(this, 8));
 
-        // The list lives inside the scroll view rather than being its own
-        // scrolling child: with a handful of accounts a nested ListView only
-        // adds a second scrollbar and a measurement bug.
-        listContainer = new LinearLayout(this);
-        listContainer.setOrientation(LinearLayout.VERTICAL);
-        content.addView(listContainer, UiKit.matchWrap(this, 12));
+        listRecyclerView = new RecyclerView(this);
+        listRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+        listRecyclerView.setNestedScrollingEnabled(false);
+        listRecyclerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        adapter = new SwipeAccountAdapter(this, new SwipeAccountAdapter.Listener() {
+            @Override public void open(String accountId) { openDetail(accountId); }
+            @Override public void menu(String accountId) {
+                Account account = accountManager.find(accountId);
+                if (account != null) showAccountMenu(account);
+            }
+            @Override public void pin(String accountId, boolean pinned) {
+                accountManager.setPinned(accountId, pinned);
+                renderAccounts();
+            }
+            @Override public void delete(String accountId) {
+                Account account = accountManager.find(accountId);
+                if (account != null) confirmDelete(account);
+            }
+            @Override public void startDrag(SwipeAccountAdapter.AccountViewHolder holder) {
+                if (itemTouchHelper != null) {
+                    holder.itemView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                    itemTouchHelper.startDrag(holder);
+                }
+            }
+        });
+        listRecyclerView.setAdapter(adapter);
+        itemTouchHelper = new ItemTouchHelper(new ItemTouchHelper.Callback() {
+            private boolean dragging;
 
-        emptyView = UiKit.text(this, "还没有账户。点击下方按钮添加一个 DeepSeek API Key。", 13,
+            @Override public int getMovementFlags(RecyclerView recyclerView, RecyclerView.ViewHolder holder) {
+                int directions = ItemTouchHelper.UP | ItemTouchHelper.DOWN;
+                return makeMovementFlags(directions, 0);
+            }
+
+            @Override public boolean onMove(RecyclerView recyclerView, RecyclerView.ViewHolder source,
+                    RecyclerView.ViewHolder target) {
+                if (!(source instanceof SwipeAccountAdapter.AccountViewHolder)
+                        || !(target instanceof SwipeAccountAdapter.AccountViewHolder)) return false;
+                return adapter.move(source.getBindingAdapterPosition(), target.getBindingAdapterPosition());
+            }
+
+            @Override public void onSwiped(RecyclerView.ViewHolder holder, int direction) { }
+
+            @Override public boolean canDropOver(RecyclerView recyclerView, RecyclerView.ViewHolder source,
+                    RecyclerView.ViewHolder target) {
+                return adapter.canMove(source.getBindingAdapterPosition(), target.getBindingAdapterPosition());
+            }
+
+            @Override public boolean isItemViewSwipeEnabled() { return false; }
+            @Override public boolean isLongPressDragEnabled() { return false; }
+
+            @Override public void onSelectedChanged(RecyclerView.ViewHolder holder, int actionState) {
+                super.onSelectedChanged(holder, actionState);
+                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG) {
+                    dragging = true;
+                    adapter.closeRevealed();
+                    holder.itemView.setAlpha(0.88f);
+                }
+            }
+
+            @Override public void clearView(RecyclerView recyclerView, RecyclerView.ViewHolder holder) {
+                super.clearView(recyclerView, holder);
+                holder.itemView.setAlpha(1f);
+                if (dragging) {
+                    dragging = false;
+                    accountManager.reorder(adapter.orderedIds());
+                }
+            }
+        });
+        itemTouchHelper.attachToRecyclerView(listRecyclerView);
+        content.addView(listRecyclerView, UiKit.matchWrap(this, 12));
+
+        emptyView = UiKit.text(this, "还没有账户。点击下方按钮添加 AI 账户。", 13,
                 UiKit.COLOR_MUTED, Typeface.NORMAL);
         emptyView.setGravity(Gravity.CENTER);
         emptyView.setLineSpacing(UiKit.dp(this, 4), 1.2f);
@@ -160,7 +230,7 @@ public final class AccountListActivity extends Activity {
         content.addView(actions, UiKit.matchWrap(this, 16));
 
         TextView privacy = UiKit.text(this,
-                "每个账户的 API Key 单独加密保存，只发送给对应的服务商。",
+                "每个账户的凭据单独加密保存，只发送给对应的服务商。",
                 11, UiKit.COLOR_HINT, Typeface.NORMAL);
         privacy.setGravity(Gravity.CENTER);
         privacy.setLineSpacing(UiKit.dp(this, 2), 1.15f);
@@ -203,76 +273,20 @@ public final class AccountListActivity extends Activity {
         List<Account> accounts = accountManager.list();
         long interval = graph.settings().backgroundRefreshIntervalMs();
 
-        listContainer.removeAllViews();
         emptyView.setVisibility(accounts.isEmpty() ? View.VISIBLE : View.GONE);
         refreshAllButton.setVisibility(accounts.isEmpty() ? View.GONE : View.VISIBLE);
-
-        for (int index = 0; index < accounts.size(); index++) {
-            final Account account = accounts.get(index);
-            final int position = index;
-
-            LinearLayout card = UiKit.card(this);
-            card.setClickable(true);
-            card.setFocusable(true);
-
-            LinearLayout titleRow = new LinearLayout(this);
-            titleRow.setOrientation(LinearLayout.HORIZONTAL);
-            titleRow.setGravity(Gravity.CENTER_VERTICAL);
-
-            TextView name = UiKit.text(this, account.getDisplayName(), 17, UiKit.COLOR_TEXT, Typeface.BOLD);
-            name.setSingleLine(true);
-            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            titleRow.addView(name, nameParams);
-
-            TextView balance = UiKit.text(this, balanceText(account), 17,
-                    UiKit.COLOR_TEXT, Typeface.BOLD);
-            balance.setGravity(Gravity.END);
-            titleRow.addView(balance, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-            card.addView(titleRow, UiKit.matchWrap(this, 0));
-
-            LinearLayout detailRow = new LinearLayout(this);
-            detailRow.setOrientation(LinearLayout.HORIZONTAL);
-            detailRow.setGravity(Gravity.CENTER_VERTICAL);
-
-            TextView status = UiKit.text(this, statusText(account, interval), 12,
-                    UiKit.COLOR_MUTED, Typeface.NORMAL);
-            status.setSingleLine(true);
-            detailRow.addView(status, new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView usage = UiKit.text(this, usageText(account), 12, UiKit.COLOR_HINT, Typeface.NORMAL);
-            usage.setGravity(Gravity.END);
-            detailRow.addView(usage, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-            card.addView(detailRow, UiKit.matchWrap(this, 6));
-
-            if (!account.isEnabled()) {
-                TextView disabled = UiKit.text(this, "已停用 · 不计入自动刷新", 11,
-                        UiKit.COLOR_HINT, Typeface.NORMAL);
-                card.addView(disabled, UiKit.matchWrap(this, 8));
-            }
-            if (accountManager.isCredentialDegraded(account)) {
-                TextView degraded = UiKit.text(this, "密钥保护降级，建议重新保存", 11,
-                        UiKit.COLOR_PEAK, Typeface.NORMAL);
-                card.addView(degraded, UiKit.matchWrap(this, 8));
-            }
-
-            card.setAlpha(account.isEnabled() ? 1f : 0.6f);
-            card.setContentDescription(account.getDisplayName());
-            card.setOnClickListener(view -> openDetail(account.getId()));
-            card.setOnLongClickListener(view -> {
-                showAccountMenu(account, position, accounts.size());
-                return true;
-            });
-
-            listContainer.addView(card, UiKit.matchWrap(this, 10));
+        List<SwipeAccountAdapter.Row> rows = new ArrayList<>();
+        for (Account account : accounts) {
+            AccountRefreshManager.AccountView view = refreshManager.view(account.getId());
+            UsageResult latest = view.lastSuccess;
+            rows.add(new SwipeAccountAdapter.Row(account.getId(), account.getDisplayName(),
+                    balanceText(account, latest), usageText(account, latest), statusText(view, interval),
+                    account.isEnabled(), accountManager.isCredentialDegraded(account), account.isPinned()));
         }
+        adapter.setRows(rows);
     }
 
-    private String balanceText(Account account) {
-        UsageResult result = usageRepository.latest(account.getId());
+    private String balanceText(Account account, UsageResult result) {
         if (CodexProvider.ID.equals(account.getProviderId())) {
             QuotaWindow weekly = weeklyWindow(result);
             return weekly == null ? Money.EMPTY
@@ -284,8 +298,7 @@ public final class AccountListActivity extends Activity {
         return Money.format(result.getBalance());
     }
 
-    private String usageText(Account account) {
-        UsageResult result = usageRepository.latest(account.getId());
+    private String usageText(Account account, UsageResult result) {
         if (CodexProvider.ID.equals(account.getProviderId())) {
             return result != null && weeklyWindow(result) == null ? "未提供每周额度" : "每周剩余";
         }
@@ -320,8 +333,7 @@ public final class AccountListActivity extends Activity {
      * request: the list is a summary, and a screen that refreshes N accounts
      * just by being opened would burn the user's quota.
      */
-    private String statusText(Account account, long intervalMs) {
-        AccountRefreshManager.AccountView view = refreshManager.view(account.getId());
+    private String statusText(AccountRefreshManager.AccountView view, long intervalMs) {
         // The staleness judgement lives in AccountView.displayStatus and the
         // wording in StatusWords, both shared with the widget path: the two
         // surfaces must not describe the same stored row differently.
@@ -336,16 +348,10 @@ public final class AccountListActivity extends Activity {
                 view.showingRetainedData());
     }
 
-    private void showAccountMenu(Account account, int position, int total) {
+    private void showAccountMenu(Account account) {
         List<String> labels = new ArrayList<>();
         labels.add("重命名");
         labels.add(account.isEnabled() ? "停用" : "启用");
-        if (position > 0) {
-            labels.add("上移");
-        }
-        if (position < total - 1) {
-            labels.add("下移");
-        }
         // A Codex account's secret is a pairing, and the computer can revoke that
         // pairing at any moment. Without an entry here the only way back is to add a
         // second account for the same computer and leave the first one reading
@@ -359,12 +365,12 @@ public final class AccountListActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle(account.getDisplayName())
                 .setItems(labels.toArray(new String[0]), (dialog, which) ->
-                        handleMenuChoice(labels.get(which), account, position, total))
+                        handleMenuChoice(labels.get(which), account))
                 .setNegativeButton("取消", null)
                 .show();
     }
 
-    private void handleMenuChoice(String label, Account account, int position, int total) {
+    private void handleMenuChoice(String label, Account account) {
         switch (label) {
             case "重命名":
                 promptRename(account);
@@ -376,12 +382,6 @@ public final class AccountListActivity extends Activity {
             case "启用":
                 accountManager.setEnabled(account.getId(), true);
                 renderAccounts();
-                break;
-            case "上移":
-                moveAccount(position, position - 1);
-                break;
-            case "下移":
-                moveAccount(position, position + 1);
                 break;
             case "重新配对":
                 openPairing(account.getId());
@@ -426,21 +426,6 @@ public final class AccountListActivity extends Activity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
-    }
-
-    private void moveAccount(int from, int to) {
-        List<Account> accounts = accountManager.list();
-        if (from < 0 || to < 0 || from >= accounts.size() || to >= accounts.size()) {
-            return;
-        }
-        List<String> ids = new ArrayList<>();
-        for (Account account : accounts) {
-            ids.add(account.getId());
-        }
-        String moved = ids.remove(from);
-        ids.add(to, moved);
-        accountManager.reorder(ids);
-        renderAccounts();
     }
 
     private void confirmDelete(Account account) {

@@ -117,6 +117,25 @@ public class AccountIdentityTest {
     // ------------------------------------------------------ creating accounts
 
     @Test
+    public void restoredBridgeCacheClearsFailureWithoutResettingDataAge() {
+        Account account = manager.createAccount("codex", "cached", AuthType.BRIDGE_TOKEN);
+        UsageResult cached = UsageResult.builder().accountId(account.getId())
+                .source(UsageResult.Source.BRIDGE).status(UsageStatus.OK).updatedAt(BASE_TIME).build();
+        usage.save(account.getId(), cached, true);
+        usage.save(account.getId(), cached.toBuilder().status(UsageStatus.BRIDGE_OFFLINE)
+                .updatedAt(BASE_TIME + 60_000).build(), false);
+        usage.save(account.getId(), cached, true);
+        assertEquals(UsageStatus.OK, usage.latestAttempt(account.getId()).getStatus());
+        assertEquals(BASE_TIME, usage.latest(account.getId()).getUpdatedAt());
+
+        // A late, older response may be the newest attempt, but cannot replace fresher data.
+        usage.save(account.getId(), cached.toBuilder().status(UsageStatus.STALE)
+                .updatedAt(BASE_TIME - 60_000).build(), true);
+        assertEquals(UsageStatus.STALE, usage.latestAttempt(account.getId()).getStatus());
+        assertEquals(BASE_TIME, usage.latest(account.getId()).getUpdatedAt());
+    }
+
+    @Test
     public void createWithKeyAssignsAnAccountIdAndABoundCredential() throws Exception {
         Account account = createWithKey("DeepSeek个人", API_KEY_OLD);
 
@@ -126,6 +145,32 @@ public class AccountIdentityTest {
                 account.getCredentialId() == null || account.getCredentialId().isEmpty());
         assertEquals("create must store the account under the id it returned",
                 account.getId(), manager.find(account.getId()).getId());
+    }
+
+    @Test
+    public void pinnedAccountsStayFirstAndReorderingKeepsBothGroupsSeparate() {
+        Account ordinaryFirst = manager.createAccount(PROVIDER_ID, "普通账户", AuthType.API_KEY);
+        Account pinnedFirst = manager.createAccount(PROVIDER_ID, "置顶账户 1", AuthType.API_KEY);
+        Account pinnedSecond = manager.createAccount(PROVIDER_ID, "置顶账户 2", AuthType.API_KEY);
+
+        manager.setPinned(pinnedFirst.getId(), true);
+        manager.setPinned(pinnedSecond.getId(), true);
+        assertTrue(manager.find(pinnedFirst.getId()).isPinned());
+        assertEquals(pinnedFirst.getId(), manager.list().get(0).getId());
+        assertEquals(pinnedSecond.getId(), manager.list().get(1).getId());
+
+        // Even a stale or incorrect caller order cannot drag an ordinary account
+        // ahead of the fixed pinned group.
+        manager.reorder(java.util.Arrays.asList(ordinaryFirst.getId(), pinnedSecond.getId(), pinnedFirst.getId()));
+        assertEquals(pinnedSecond.getId(), manager.list().get(0).getId());
+        assertEquals(pinnedFirst.getId(), manager.list().get(1).getId());
+        assertEquals(ordinaryFirst.getId(), manager.list().get(2).getId());
+
+        manager.setPinned(pinnedSecond.getId(), false);
+        assertFalse(manager.find(pinnedSecond.getId()).isPinned());
+        assertEquals(pinnedFirst.getId(), manager.list().get(0).getId());
+        assertEquals(pinnedSecond.getId(), manager.list().get(1).getId());
+        assertEquals(ordinaryFirst.getId(), manager.list().get(2).getId());
     }
 
     // ------------------------------------- replaceCredential keeps identity
@@ -359,6 +404,9 @@ public class AccountIdentityTest {
             all.sort(new Comparator<Account>() {
                 @Override
                 public int compare(Account left, Account right) {
+                    if (left.isPinned() != right.isPinned()) {
+                        return left.isPinned() ? -1 : 1;
+                    }
                     if (left.getSortOrder() != right.getSortOrder()) {
                         return Integer.compare(left.getSortOrder(), right.getSortOrder());
                     }
@@ -580,7 +628,7 @@ public class AccountIdentityTest {
         @Override
         public UsageResult latestAttempt(String accountId) {
             // Mirrors SqliteUsageRepository.latestAttempt: no success filter, so
-            // the newest row wins whether it succeeded or failed.
+            // the last inserted row wins regardless of the cached data's age.
             if (accountId == null || accountId.isEmpty()) {
                 return null;
             }
@@ -589,7 +637,7 @@ public class AccountIdentityTest {
                 if (!accountId.equals(row.accountId)) {
                     continue;
                 }
-                if (newest == null || isNewer(row, newest)) {
+                if (newest == null || row.id > newest.id) {
                     newest = row;
                 }
             }

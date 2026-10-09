@@ -5,7 +5,6 @@ import com.aiusage.monitor.util.Freshness;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -30,7 +29,7 @@ import java.util.Set;
  *   <li>the account's <em>last successful</em> reading stays however old it is —
  *     deleting it would blank the widget and the list, which is the one thing
  *     Spec §39 forbids;</li>
- *   <li>the account's newest row stays even when it is a failure, because that
+ *   <li>the account's last arriving row (highest id) stays even when it is a failure, because that
  *     is what the status line shows;</li>
  *   <li>every reading from today stays, so the day the user is looking at is
  *     never half missing;</li>
@@ -81,33 +80,17 @@ public final class SnapshotRetention {
         }
         long cutoff = nowMs - retentionMs;
 
-        // Newest row and newest success per account, in one pass over a copy
-        // sorted oldest-first so "newest" is simply the last one seen.
-        List<UsageSnapshot> ordered = new ArrayList<>(rows);
-        // Collections.sort with an explicit comparator: List#sort and
-        // Comparator.comparingLong are both API 24 and this app supports 23.
-        Collections.sort(ordered, new Comparator<UsageSnapshot>() {
-            @Override
-            public int compare(UsageSnapshot left, UsageSnapshot right) {
-                int byTime = Long.compare(left.getTimestamp(), right.getTimestamp());
-                if (byTime != 0) {
-                    return byTime;
-                }
-                // Same instant: agree with the read path, which calls the largest
-                // id the newest row (`timestamp DESC, id DESC`). Sorting by time
-                // alone leaves the tie to the order the cursor returned, so
-                // retention could protect a different row than the one the UI
-                // reads back (docs/PHASE-0-7-REVIEW.md §2.3).
-                return Long.compare(left.getId(), right.getId());
-            }
-        });
+        // Keep arrival order and data age separate, without sorting the entire history.
         Map<String, Long> newestRow = new HashMap<>();
-        Map<String, Long> newestSuccess = new HashMap<>();
-        for (UsageSnapshot row : ordered) {
+        Map<String, UsageSnapshot> newestSuccess = new HashMap<>();
+        for (UsageSnapshot row : rows) {
             String accountId = row.getAccountId();
-            newestRow.put(accountId, row.getId());
-            if (row.isSuccess()) {
-                newestSuccess.put(accountId, row.getId());
+            Long newestId = newestRow.get(accountId);
+            if (newestId == null || row.getId() > newestId) newestRow.put(accountId, row.getId());
+            UsageSnapshot success = newestSuccess.get(accountId);
+            if (row.isSuccess() && (success == null || row.getTimestamp() > success.getTimestamp()
+                    || (row.getTimestamp() == success.getTimestamp() && row.getId() > success.getId()))) {
+                newestSuccess.put(accountId, row);
             }
         }
 
@@ -118,8 +101,8 @@ public final class SnapshotRetention {
                 keep.add(row.getId());
                 continue;
             }
-            Long lastSuccess = newestSuccess.get(row.getAccountId());
-            if (lastSuccess != null && lastSuccess == row.getId()) {
+            UsageSnapshot lastSuccess = newestSuccess.get(row.getAccountId());
+            if (lastSuccess != null && lastSuccess.getId() == row.getId()) {
                 keep.add(row.getId());
                 continue;
             }

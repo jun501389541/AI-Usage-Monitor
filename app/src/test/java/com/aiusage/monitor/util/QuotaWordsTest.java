@@ -37,14 +37,14 @@ public class QuotaWordsTest {
     public void rendersLabelUsageAndResetTime() {
         String line = QuotaWords.line(window("codex:300", "5 小时", 31d, millis(2026, Calendar.OCTOBER, 2, 18, 22)), NOW);
 
-        assertEquals("5 小时 · 已用 31% · 今天 18:22 重置", line);
+        assertEquals("5 小时 · 已用 31% · 2026-10-02 18:22 重置", line);
     }
 
     @Test
     public void usesTheDayWhenTheResetIsNotToday() {
         String line = QuotaWords.line(window("codex:10080", "7 天", 49d, millis(2026, Calendar.OCTOBER, 8, 8, 30)), NOW);
 
-        assertTrue(line, line.endsWith("10-08 08:30 重置"));
+        assertTrue(line, line.endsWith("2026-10-08 08:30 重置"));
     }
 
     /**
@@ -87,7 +87,7 @@ public class QuotaWordsTest {
                 .contains("已用 100%"));
         assertTrue(QuotaWords.line(window("a", "窗口", -20d, millis(2026, Calendar.OCTOBER, 2, 13, 0)), NOW)
                 .contains("已用 0%"));
-        assertEquals("窗口 · 已用 62% · 今天 12:30 重置",
+        assertEquals("窗口 · 已用 62% · 2026-10-02 12:30 重置",
                 QuotaWords.line(window("a", "窗口", 61.7d, millis(2026, Calendar.OCTOBER, 2, 12, 30)), NOW));
     }
 

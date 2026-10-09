@@ -313,13 +313,14 @@ public final class AccountRefreshManager {
                 }
 
                 // The provider returns the platform's view; the account
-                // identity and a fresh timestamp are stamped here so every
+                // identity and a timestamp are stamped here so every
                 // stored row is self-describing regardless of what the
                 // provider filled in.
                 UsageResult stamped = result.toBuilder()
                         .accountId(accountId)
                         .providerId(account.getProviderId())
-                        .updatedAt(System.currentTimeMillis())
+                        .updatedAt(result.getSource() == UsageResult.Source.BRIDGE && result.getUpdatedAt() > 0
+                                ? result.getUpdatedAt() : System.currentTimeMillis())
                         .build();
 
                 if (bridge != null) {
@@ -327,7 +328,7 @@ public final class AccountRefreshManager {
                     // 时间", and it is only honest if it moves when a read through that
                     // computer actually succeeded — inside this monitor, so a delete
                     // landing now cannot be stamped afterwards.
-                    bridges.touchLastSeen(bridge.getId(), stamped.getUpdatedAt());
+                    bridges.touchLastSeen(bridge.getId(), System.currentTimeMillis());
                 }
 
                 // Daily usage is derived from the balance reading, per account.

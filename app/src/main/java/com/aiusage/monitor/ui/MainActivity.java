@@ -52,6 +52,7 @@ import com.aiusage.monitor.model.Account;
 import com.aiusage.monitor.model.Metric;
 import com.aiusage.monitor.model.QuotaWindow;
 import com.aiusage.monitor.model.UsageResult;
+import com.aiusage.monitor.model.UsageStatus;
 import com.aiusage.monitor.util.QuotaWords;
 import com.aiusage.monitor.provider.AuthContext;
 import com.aiusage.monitor.provider.codex.CodexProvider;
@@ -180,6 +181,7 @@ public final class MainActivity extends Activity {
     private boolean historyScrolling;
     private List<RecentReadingsAdapter.Row> pendingHistoryRows;
     private LinearLayout quotaContainer;
+    private LimitResetCardView limitResetCard;
     private TimeZone displayTimeZone = TimeZone.getTimeZone("Asia/Shanghai");
     private List<QuotaWindow> displayedQuotaWindows = Collections.emptyList();
     private final BroadcastReceiver timezoneReceiver = new BroadcastReceiver() {
@@ -316,6 +318,7 @@ public final class MainActivity extends Activity {
         peakRemainingView = null;
         peakTimeView = null;
         displayedQuotaWindows = Collections.emptyList();
+        limitResetCard = null;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
@@ -484,6 +487,13 @@ public final class MainActivity extends Activity {
         detailsView = text(isBridge ? "等待读取额度窗口" : "等待读取 CNY 余额", 13, COLOR_MUTED, Typeface.NORMAL);
         detailsView.setLineSpacing(dp(4), 1.1f);
         resultCard.addView(detailsView, matchWrap(12));
+
+        if (isBridge) {
+            LinearLayout resetCard = card();
+            content.addView(resetCard, matchWrap(16));
+            limitResetCard = new LimitResetCardView(this, COLOR_TEXT, COLOR_MUTED);
+            resetCard.addView(limitResetCard, matchWrap(0));
+        }
 
         // Spec §26 kept every reading from the first version precisely so this
         // question could be answered later, and §44 lists 历史 as a destination.
@@ -988,6 +998,7 @@ public final class MainActivity extends Activity {
             return;
         }
         displayTimeZone = timezone;
+        if (limitResetCard != null) limitResetCard.updateExpiryTimes(displayTimeZone);
         if (quotaContainer != null && quotaContainer.getVisibility() == View.VISIBLE
                 && !displayedQuotaWindows.isEmpty()) {
             renderQuotaWindows(displayedQuotaWindows);
@@ -1061,7 +1072,8 @@ public final class MainActivity extends Activity {
         // difference between; the shared rule renders the dash instead of a "0.00"
         // that would claim the account spent nothing today.
         String todayUsage = Money.todayUsage(
-                usageRepository.dailyUsage(result.getAccountId()), currency, balance != null);
+                balance == null ? null : usageRepository.dailyUsage(result.getAccountId()),
+                currency, balance != null);
 
         statusView.setText(available ? "账户可用" : "账户不可用");
         statusView.setTextColor(available ? COLOR_TEXT : COLOR_MUTED);
@@ -1069,6 +1081,10 @@ public final class MainActivity extends Activity {
         balanceView.setText(totalDisplay);
         todayUsageView.setText(todayUsage);
         renderQuotaWindows(result.getQuotaWindows());
+        if (limitResetCard != null) {
+            limitResetCard.show(result.getLimitResetCredits(), result.getLimitResetCreditsStatus(),
+                    result.getStatus() != UsageStatus.OK, displayTimeZone);
+        }
         // Quota windows are the only reading a Codex account has, so they go on
         // screen whenever the result carries any - and nowhere when it does not,
         // rather than as a heading over an empty block. The wording itself is
@@ -1106,6 +1122,7 @@ public final class MainActivity extends Activity {
         quotaContainer.removeAllViews();
         quotaContainer.setVisibility(View.GONE);
         detailsView.setVisibility(View.VISIBLE);
+        if (limitResetCard != null) limitResetCard.show(null, null, false, displayTimeZone);
         detailsView.setText(message);
         renderRecentReadings();
         autoStatusView.setText(refreshIntervalDescription() + " · 本次失败，稍后重试");

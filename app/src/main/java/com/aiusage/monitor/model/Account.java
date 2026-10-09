@@ -10,7 +10,7 @@ import com.aiusage.monitor.auth.AuthType;
  * {@code credentialId} pointing into the credential store. Spec §53 rule 11.
  *
  * <p>Field list is exactly the one the spec prescribes: {@code id / providerId /
- * displayName / authType / credentialId / bridgeId / enabled / sortOrder /
+ * displayName / authType / credentialId / bridgeId / enabled / pinned / sortOrder /
  * createdAt / updatedAt}.
  */
 public final class Account {
@@ -22,6 +22,7 @@ public final class Account {
     private final String credentialId;
     private final String bridgeId;
     private final boolean enabled;
+    private final boolean pinned;
     private final int sortOrder;
     private final long createdAt;
     private final long updatedAt;
@@ -34,6 +35,7 @@ public final class Account {
         this.credentialId = builder.credentialId;
         this.bridgeId = builder.bridgeId;
         this.enabled = builder.enabled;
+        this.pinned = builder.pinned;
         this.sortOrder = builder.sortOrder;
         this.createdAt = builder.createdAt;
         this.updatedAt = builder.updatedAt;
@@ -73,6 +75,9 @@ public final class Account {
         return enabled;
     }
 
+    /** Pinned accounts are grouped before ordinary accounts in the list. */
+    public boolean isPinned() { return pinned; }
+
     /** Ordering hint for the account list. */
     public int getSortOrder() {
         return sortOrder;
@@ -95,6 +100,7 @@ public final class Account {
                 .credentialId(credentialId)
                 .bridgeId(bridgeId)
                 .enabled(enabled)
+                .pinned(pinned)
                 .sortOrder(sortOrder)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt);
@@ -118,6 +124,7 @@ public final class Account {
         private String credentialId = "";
         private String bridgeId = "";
         private boolean enabled = true;
+        private boolean pinned;
         private int sortOrder;
         private long createdAt = System.currentTimeMillis();
         private long updatedAt = System.currentTimeMillis();
@@ -154,6 +161,11 @@ public final class Account {
 
         public Builder enabled(boolean value) {
             this.enabled = value;
+            return this;
+        }
+
+        public Builder pinned(boolean value) {
+            this.pinned = value;
             return this;
         }
 

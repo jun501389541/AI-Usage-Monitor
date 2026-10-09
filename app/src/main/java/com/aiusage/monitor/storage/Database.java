@@ -27,8 +27,9 @@ public final class Database extends SQLiteOpenHelper {
      * Version 3 adds {@code bridges}: the paired computers, their addresses and
      * their pinned fingerprints. Spec §21/§22, and the debt Phase 6 recorded when
      * it put a Bridge's URL inside the credential payload (docs/PHASE-6-PLAN.md A3).
+     * Version 4 adds account pinning while preserving the existing sort order.
      */
-    private static final int VERSION = 3;
+    private static final int VERSION = 4;
 
     static final String TABLE_ACCOUNTS = "accounts";
     static final String TABLE_CREDENTIALS = "credentials";
@@ -69,6 +70,16 @@ public final class Database extends SQLiteOpenHelper {
     }
 
     @Override
+    public void onOpen(SQLiteDatabase db) {
+        super.onOpen(db);
+        if (!db.isReadOnly()) {
+            // Also install on existing v4 databases; this adds no columns or data migration.
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_snapshots_account_attempt ON "
+                    + TABLE_SNAPSHOTS + " (account_id, id DESC)");
+        }
+    }
+
+    @Override
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE " + TABLE_ACCOUNTS + " ("
                 + "id TEXT PRIMARY KEY NOT NULL,"
@@ -78,6 +89,7 @@ public final class Database extends SQLiteOpenHelper {
                 + "credential_id TEXT NOT NULL DEFAULT '',"
                 + "bridge_id TEXT NOT NULL DEFAULT '',"
                 + "enabled INTEGER NOT NULL DEFAULT 1,"
+                + "pinned INTEGER NOT NULL DEFAULT 0,"
                 + "sort_order INTEGER NOT NULL DEFAULT 0,"
                 + "created_at INTEGER NOT NULL,"
                 + "updated_at INTEGER NOT NULL)");
@@ -144,8 +156,23 @@ public final class Database extends SQLiteOpenHelper {
         if (oldVersion < 3) {
             migrateBridges(db);
         }
+        if (oldVersion < 4) {
+            migratePinnedAccounts(db);
+        }
         // The upstream app's own data is imported by LegacyMigration rather than
         // here; this method only carries the new schema forward.
+    }
+
+    /** Version 3 to 4: add a default-unpinned flag without rewriting account order. */
+    private static void migratePinnedAccounts(SQLiteDatabase db) {
+        db.beginTransaction();
+        try {
+            db.execSQL("ALTER TABLE " + TABLE_ACCOUNTS
+                    + " ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
     }
 
     /**

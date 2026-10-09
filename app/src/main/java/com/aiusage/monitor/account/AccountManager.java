@@ -258,20 +258,24 @@ public final class AccountManager {
 
     /** Renames an account. The id does not change. */
     public void rename(String accountId, String displayName) {
-        Account account = require(accountId);
-        accounts.save(account.toBuilder()
-                .displayName(displayName)
-                .updatedAt(System.currentTimeMillis())
-                .build());
+        synchronized (writeMonitor) {
+            Account account = require(accountId);
+            accounts.save(account.toBuilder()
+                    .displayName(displayName)
+                    .updatedAt(System.currentTimeMillis())
+                    .build());
+        }
     }
 
     /** Enables or disables an account without deleting it. */
     public void setEnabled(String accountId, boolean enabled) {
-        Account account = require(accountId);
-        accounts.save(account.toBuilder()
-                .enabled(enabled)
-                .updatedAt(System.currentTimeMillis())
-                .build());
+        synchronized (writeMonitor) {
+            Account account = require(accountId);
+            accounts.save(account.toBuilder()
+                    .enabled(enabled)
+                    .updatedAt(System.currentTimeMillis())
+                    .build());
+        }
     }
 
     /**
@@ -289,11 +293,13 @@ public final class AccountManager {
      * before this table existed looks like that.
      */
     public void attachBridge(String accountId, String bridgeId) {
-        Account account = require(accountId);
-        accounts.save(account.toBuilder()
-                .bridgeId(bridgeId == null ? "" : bridgeId)
-                .updatedAt(System.currentTimeMillis())
-                .build());
+        synchronized (writeMonitor) {
+            Account account = require(accountId);
+            accounts.save(account.toBuilder()
+                    .bridgeId(bridgeId == null ? "" : bridgeId)
+                    .updatedAt(System.currentTimeMillis())
+                    .build());
+        }
     }
 
     /** The Bridge an account points at, or "" when it is a hand-typed account. */
@@ -334,7 +340,36 @@ public final class AccountManager {
 
     /** Persists a new display order. */
     public void reorder(List<String> orderedIds) {
-        accounts.reorder(orderedIds);
+        if (orderedIds == null || orderedIds.isEmpty()) return;
+        List<Account> current = accounts.findAll();
+        java.util.Map<String, Boolean> pinnedById = new java.util.HashMap<>();
+        for (Account account : current) pinnedById.put(account.getId(), account.isPinned());
+
+        List<String> pinned = new ArrayList<>();
+        List<String> ordinary = new ArrayList<>();
+        for (String id : orderedIds) {
+            Boolean isPinned = pinnedById.remove(id);
+            if (isPinned == null) continue;
+            (isPinned ? pinned : ordinary).add(id);
+        }
+        // Keep accounts omitted by a partial caller in their existing group and order.
+        for (Account account : current) {
+            if (pinnedById.containsKey(account.getId())) {
+                (account.isPinned() ? pinned : ordinary).add(account.getId());
+            }
+        }
+        pinned.addAll(ordinary);
+        accounts.reorder(pinned);
+    }
+
+    /** Moves an account between the fixed pinned and ordinary groups. */
+    public void setPinned(String accountId, boolean pinned) {
+        synchronized (writeMonitor) {
+            Account account = accounts.findById(accountId);
+            if (account == null || account.isPinned() == pinned) return;
+            accounts.save(account.toBuilder().pinned(pinned)
+                    .updatedAt(System.currentTimeMillis()).build());
+        }
     }
 
     /** Reads the secret for an account, ready to hand to its provider. */

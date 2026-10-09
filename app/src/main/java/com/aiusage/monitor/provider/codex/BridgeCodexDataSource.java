@@ -78,6 +78,13 @@ public final class BridgeCodexDataSource {
         try {
             response = send(chosen, url, deviceToken);
         } catch (IOException exception) {
+            Throwable cause = exception;
+            for (int depth = 0; cause != null && depth < 16; depth++, cause = cause.getCause()) {
+                if (cause instanceof com.aiusage.monitor.bridge.PinnedTrustManager.PinMismatchException) {
+                    throw new UsageException(UsageError.BRIDGE_PAIRING_REQUIRED,
+                            "电脑端证书与配对记录不一致，请核对电脑后重新扫码配对。", exception);
+                }
+            }
             // Nothing reached the Bridge, or it died mid-request. This is the
             // "computer offline" case, and the only one allowed to say it.
             throw new UsageException(UsageError.BRIDGE_OFFLINE,
@@ -100,7 +107,7 @@ public final class BridgeCodexDataSource {
         }
         if (code == 401 || code == 403) {
             throw new UsageException(UsageError.BRIDGE_UNAUTHORIZED,
-                    "电脑端拒绝了这个令牌（HTTP " + code + "）");
+                    "电脑端未授权这台手机或授权已失效，请重新配对并在电脑端批准。");
         }
         if (code == 409) {
             throw new UsageException(UsageError.BRIDGE_UNAUTHORIZED,

@@ -1,11 +1,14 @@
 package com.aiusage.monitor.provider.codex;
 
 import com.aiusage.monitor.model.Metric;
+import com.aiusage.monitor.model.LimitResetCredits;
+import com.aiusage.monitor.model.LimitResetCreditsStatus;
 import com.aiusage.monitor.model.QuotaWindow;
 import com.aiusage.monitor.model.UsageError;
 import com.aiusage.monitor.model.UsageResult;
 import com.aiusage.monitor.model.UsageStatus;
 import com.aiusage.monitor.provider.UsageException;
+import com.aiusage.monitor.usage.LimitResetCreditsJson;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -57,6 +60,7 @@ public final class BridgeUsageParser {
             throw new UsageException(UsageError.UNKNOWN, "Bridge 响应里没有 state 区块");
         }
 
+        LimitResetCredits resets = LimitResetCreditsJson.decode(root.optJSONObject("rateLimitResetCredits"));
         UsageResult.Builder builder = UsageResult.builder()
                 .accountId(accountId)
                 .providerId(PROVIDER_ID)
@@ -64,7 +68,9 @@ public final class BridgeUsageParser {
                 // later refactor cannot mistake an empty Balance for a missing one.
                 .status(statusFor(root, state))
                 .updatedAt(nowMs)
-                .source(UsageResult.Source.BRIDGE);
+                .source(UsageResult.Source.BRIDGE)
+                .limitResetCredits(resets)
+                .limitResetCreditsStatus(resetCreditsStatus(root, resets));
 
         JSONArray windows = state.optJSONArray("windows");
         int accepted = 0;
@@ -120,10 +126,19 @@ public final class BridgeUsageParser {
             case "NO_DATA": case "UNSUPPORTED": status = UsageStatus.NO_DATA; break;
             default: throw new UsageException(UsageError.UNKNOWN, "电脑端额度状态无法识别。");
         }
-        if (root.optBoolean("isStale", false) && status == UsageStatus.OK) status = UsageStatus.STALE;
+        // Cached quota can still be within the desktop freshness threshold even
+        // when the most recent upstream read failed. Do not call that a new success.
+        boolean retainedAfterFailure = !root.optString("errorCode", "").isEmpty()
+                && !"null".equals(root.optString("errorCode", ""));
+        if (status == UsageStatus.OK && (root.optBoolean("isStale", false) || retainedAfterFailure)) {
+            status = UsageStatus.STALE;
+        }
+        LimitResetCredits resets = LimitResetCreditsJson.decode(root.optJSONObject("rateLimitResetCredits"));
         UsageResult.Builder builder = UsageResult.builder().accountId(accountId).providerId(PROVIDER_ID)
-                .status(status).updatedAt(timestamp(root.optString("updatedAt"), nowMs))
-                .source(UsageResult.Source.BRIDGE);
+                .status(status).updatedAt(timestamp(root.optString("dataTimestamp"), timestamp(root.optString("updatedAt"), nowMs)))
+                .source(UsageResult.Source.BRIDGE)
+                .limitResetCredits(resets)
+                .limitResetCreditsStatus(resetCreditsStatus(root, resets));
         JSONArray windows = root.optJSONArray("quotaWindows");
         int count = 0;
         if (windows != null) {
@@ -132,10 +147,11 @@ public final class BridgeUsageParser {
                 if (raw == null || (raw.isNull("usedPercent") && raw.isNull("remainingPercent"))) continue;
                 double used = raw.isNull("usedPercent") ? 100 - raw.optDouble("remainingPercent", Double.NaN)
                         : raw.optDouble("usedPercent", Double.NaN);
-                double remaining = raw.isNull("remainingPercent") ? 100 - used
+                double remaining = raw.isNull("remainingPercent")
+                        ? Math.max(0d, Math.min(100d, 100d - used))
                         : raw.optDouble("remainingPercent", Double.NaN);
                 if (!Double.isFinite(used) || !Double.isFinite(remaining)
-                        || used < 0 || used > 100 || remaining < 0 || remaining > 100) {
+                        || remaining < 0 || remaining > 100) {
                     throw new UsageException(UsageError.UNKNOWN, "电脑端额度百分比无效。");
                 }
                 builder.addQuotaWindow(new QuotaWindow(raw.optString("id"), raw.optString("label"),
@@ -150,6 +166,19 @@ public final class BridgeUsageParser {
         builder.addMetric(new Metric(UsageResult.METRIC_ACCOUNT_AVAILABLE, "账户可用",
                 status == UsageStatus.OK || status == UsageStatus.STALE ? 1 : 0, ""));
         return builder.build();
+    }
+
+    private static LimitResetCreditsStatus resetCreditsStatus(JSONObject root, LimitResetCredits resets) {
+        if (resets != null) return LimitResetCreditsStatus.AVAILABLE;
+        if (!root.has("rateLimitResetCreditsStatus")) {
+            return root.has("rateLimitResetCredits")
+                    ? LimitResetCreditsStatus.INVALID_FORMAT : LimitResetCreditsStatus.LEGACY_BRIDGE;
+        }
+        switch (root.optString("rateLimitResetCreditsStatus", "")) {
+            case "NOT_RETURNED": return LimitResetCreditsStatus.NOT_RETURNED;
+            case "INVALID_FORMAT": return LimitResetCreditsStatus.INVALID_FORMAT;
+            default: return LimitResetCreditsStatus.INVALID_FORMAT;
+        }
     }
 
     private static long timestamp(String iso, long fallback) throws UsageException {

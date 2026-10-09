@@ -3,7 +3,6 @@ package com.aiusage.monitor.util;
 import com.aiusage.monitor.model.QuotaWindow;
 
 import java.text.SimpleDateFormat;
-import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -36,7 +35,7 @@ public final class QuotaWords {
     private QuotaWords() {
     }
 
-    /** One window on one line, e.g. {@code 5 小时 · 已用 31% · 今天 18:22 重置}. */
+    /** One window on one line, including the full reset date and time. */
     public static String line(QuotaWindow window, long nowMs) {
         if (window == null) {
             return "";
@@ -59,13 +58,7 @@ public final class QuotaWords {
         if (resetAtMs <= nowMs) {
             return RESET_DUE;
         }
-        Calendar reset = Calendar.getInstance();
-        reset.setTimeInMillis(resetAtMs);
-        String clock = new SimpleDateFormat("HH:mm", Locale.CHINA).format(new Date(resetAtMs));
-        if (isSameDay(reset, nowMs)) {
-            return "今天 " + clock + " 重置";
-        }
-        return new SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(new Date(resetAtMs)) + " 重置";
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(new Date(resetAtMs)) + " 重置";
     }
 
     /** Time until reset, independent of the device's timezone. */
@@ -101,17 +94,19 @@ public final class QuotaWords {
         }
         TimeZone zone = timezone == null ? TimeZone.getTimeZone("Asia/Shanghai") : timezone;
         Date reset = new Date(resetAtMs);
-        SimpleDateFormat momentFormat = new SimpleDateFormat("MM-dd HH:mm", Locale.CHINA);
+        SimpleDateFormat momentFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA);
         momentFormat.setTimeZone(zone);
-        SimpleDateFormat offsetFormat = new SimpleDateFormat("XXX", Locale.US);
-        offsetFormat.setTimeZone(zone);
-        String offset = offsetFormat.format(reset);
-        if ("Z".equals(offset)) {
-            offset = "+00:00";
-        }
+        String offset = utcOffsetAt(zone, resetAtMs);
         String zoneLabel = "Asia/Shanghai".equals(zone.getID()) ? "" : " (UTC" + offset + ")";
         return resetCountdown(resetAtMs, nowMs).replace(" ", "")
                 + " · " + momentFormat.format(reset) + zoneLabel;
+    }
+
+    /** Uses the offset at the displayed date, including DST; compatible with API 23. */
+    static String utcOffsetAt(TimeZone zone, long atMillis) {
+        int minutes = zone.getOffset(atMillis) / 60_000;
+        int absolute = Math.abs(minutes);
+        return String.format(Locale.US, "%s%02d:%02d", minutes < 0 ? "-" : "+", absolute / 60, absolute % 60);
     }
 
     /** Remaining quota for a history row; explicitly names the percentage meaning. */
@@ -186,10 +181,4 @@ public final class QuotaWords {
         return (int) rounded;
     }
 
-    private static boolean isSameDay(Calendar other, long nowMs) {
-        Calendar now = Calendar.getInstance();
-        now.setTimeInMillis(nowMs);
-        return other.get(Calendar.YEAR) == now.get(Calendar.YEAR)
-                && other.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR);
-    }
 }

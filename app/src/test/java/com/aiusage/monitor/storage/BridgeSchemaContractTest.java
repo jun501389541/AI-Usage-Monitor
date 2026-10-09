@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 /**
- * The shape of schema version 3, and the decisions baked into it. Phase 7 step 5.
+ * The shape of schema version 4, and the decisions baked into it. Phase 7 step 5.
  *
  * <p>{@code Database} extends {@code SQLiteOpenHelper}, so a host JVM can read its
  * constants but cannot open a database — which is also why the migration itself is
@@ -63,11 +63,11 @@ public class BridgeSchemaContractTest {
     // ------------------------------------------------------- the schema pins
 
     @Test
-    public void versionThreeAddsTheBridgesTableToBothPaths() throws IOException {
+    public void versionFourKeepsTheBridgeMigrationAndAddsPinnedAccounts() throws IOException {
         String source = readDatabaseSource();
 
         assertTrue("the helper version has to move or onUpgrade never runs",
-                source.contains("private static final int VERSION = 3;"));
+                source.contains("private static final int VERSION = 4;"));
         assertTrue("onCreate must build the table from the shared DDL",
                 source.contains("db.execSQL(createBridgesTable(false));"));
         assertTrue("and so must the migration",
@@ -77,6 +77,20 @@ public class BridgeSchemaContractTest {
                 1, count(source, "private static String createBridgesTable("));
         assertTrue("the upgrade has to be reachable from a version 2 database",
                 source.contains("if (oldVersion < 3) {\n            migrateBridges(db);\n        }"));
+        assertTrue("fresh databases need the pinned column",
+                source.contains("+ \"pinned INTEGER NOT NULL DEFAULT 0,\""));
+        assertTrue("version 3 accounts need the default-unpinned migration",
+                source.contains("if (oldVersion < 4) {\n            migratePinnedAccounts(db);\n        }"));
+
+        int start = source.indexOf("private static void migratePinnedAccounts(SQLiteDatabase db) {");
+        int end = source.indexOf("\n    }", start);
+        assertTrue("migratePinnedAccounts must exist", start > 0);
+        String migration = source.substring(start, end);
+        assertTrue("migration adds only a default-unpinned flag and is transactional",
+                migration.contains("ALTER TABLE") && migration.contains("pinned INTEGER NOT NULL DEFAULT 0")
+                        && migration.contains("db.beginTransaction()")
+                        && migration.contains("db.setTransactionSuccessful()")
+                        && migration.contains("db.endTransaction()"));
     }
 
     @Test

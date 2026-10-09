@@ -100,17 +100,15 @@ public final class SqliteUsageRepository implements UsageRepository {
         if (accountId == null || accountId.isEmpty()) {
             return null;
         }
-        // Same ordering as latest(), but without the success filter: the newest
-        // row is the newest attempt whether it succeeded or failed. Failures are
-        // stored with their status (see AccountRefreshManager.recordFailure), so
-        // this decodes to a result the UI can read a status off directly.
+        // Insert order tracks completed phone queries. A restored Bridge cache
+        // can have an older data timestamp than the preceding network failure.
         try (Cursor cursor = database.getReadableDatabase().query(
                 Database.TABLE_SNAPSHOTS,
                 new String[]{"usage_data"},
                 "account_id = ?",
                 new String[]{accountId},
                 null, null,
-                "timestamp DESC, id DESC",
+                "id DESC",
                 "1")) {
             if (!cursor.moveToFirst()) {
                 return null;

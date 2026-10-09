@@ -81,6 +81,8 @@ public final class AccountEditActivity extends Activity {
     private TextView providerHint;
     private TextView deepSeekChip;
     private TextView codexChip;
+    private String generatedDefaultName;
+    private boolean settingGeneratedDefaultName;
 
     /**
      * The provider the form is configured for. Chosen when adding, fixed when
@@ -161,7 +163,14 @@ public final class AccountEditActivity extends Activity {
         nameInput.setSingleLine(true);
         nameInput.setTextSize(15);
         nameInput.setTextColor(UiKit.COLOR_TEXT);
-        nameInput.setHint("例如 DeepSeek 个人");
+        nameInput.setHint("例如 " + defaultAccountName());
+        nameInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable text) {
+                if (!settingGeneratedDefaultName) generatedDefaultName = null;
+            }
+        });
         nameInput.setInputType(InputType.TYPE_CLASS_TEXT);
         nameInput.setBackground(UiKit.roundRect(this, UiKit.COLOR_INPUT, UiKit.COLOR_BORDER, 12, 1));
         nameInput.setPadding(UiKit.dp(this, 14), UiKit.dp(this, 13), UiKit.dp(this, 14), UiKit.dp(this, 13));
@@ -258,7 +267,8 @@ public final class AccountEditActivity extends Activity {
         bridgeCard.addView(pairButton, UiKit.matchHeight(this, 50, 10));
         TextView otherPairing = UiKit.actionButton(this, "其它配对方式", false);
         otherPairing.setOnClickListener(view -> openPairing(false));
-        bridgeCard.addView(otherPairing, UiKit.matchHeight(this, 44, 8));
+        otherPairing.setMinHeight(UiKit.dp(this, 50));
+        bridgeCard.addView(otherPairing, UiKit.matchWrap(this, 8));
 
         bridgeCard.addView(label("或直接手输地址（调试通道）"), UiKit.matchWrap(this, 12));
 
@@ -355,8 +365,20 @@ public final class AccountEditActivity extends Activity {
         keyCard.setVisibility(codex ? View.GONE : View.VISIBLE);
         bridgeCard.setVisibility(codex ? View.VISIBLE : View.GONE);
 
-        deepSeekChip.setAlpha(codex ? 0.45f : 1f);
-        codexChip.setAlpha(codex ? 1f : 0.45f);
+        styleProviderChip(deepSeekChip, !codex);
+        styleProviderChip(codexChip, codex);
+
+        nameInput.setHint("例如 " + defaultAccountName());
+        if (!isEditing()) {
+            String currentName = nameInput.getText().toString().trim();
+            if (currentName.isEmpty() || (generatedDefaultName != null && currentName.equals(generatedDefaultName))) {
+                generatedDefaultName = defaultAccountName();
+                settingGeneratedDefaultName = true;
+                nameInput.setText(generatedDefaultName);
+                nameInput.setSelection(nameInput.getText().length());
+                settingGeneratedDefaultName = false;
+            }
+        }
 
         if (isEditing()) {
             providerHint.setText(codex
@@ -376,6 +398,22 @@ public final class AccountEditActivity extends Activity {
         privacy.setText(codex
                 ? "地址与令牌只发给本机 Bridge，不会离开这台电脑；Codex 的登录信息不由本应用保存。"
                 : "密钥仅发送给 api.deepseek.com。勾选“记住密钥”后，密钥只保存在本机应用私有存储中。");
+    }
+
+    private void styleProviderChip(TextView chip, boolean selected) {
+        chip.setAlpha(1f);
+        chip.setTextColor(selected ? UiKit.COLOR_BUTTON_TEXT : UiKit.COLOR_TEXT);
+        chip.setBackground(selected
+                ? UiKit.roundRect(this, UiKit.COLOR_BUTTON, 0, 14, 0)
+                : UiKit.roundRect(this, UiKit.COLOR_INPUT, UiKit.COLOR_BORDER, 14, 1));
+    }
+
+    private String defaultAccountName() {
+        String displayName;
+        if (CodexProvider.ID.equals(providerId)) displayName = "Codex";
+        else if (DeepSeekProvider.ID.equals(providerId)) displayName = "DeepSeek";
+        else displayName = providerId;
+        return displayName + " 个人";
     }
 
     private TextView label(String value) {

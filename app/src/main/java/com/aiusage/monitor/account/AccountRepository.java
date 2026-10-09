@@ -14,7 +14,7 @@ import java.util.List;
  */
 public interface AccountRepository {
 
-    /** All accounts, ordered by {@code sortOrder} then creation time. */
+    /** Pinned accounts first, then each group by {@code sortOrder} and creation time. */
     List<Account> findAll();
 
     /** Only enabled accounts, in the same order. */

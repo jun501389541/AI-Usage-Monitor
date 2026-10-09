@@ -207,16 +207,30 @@ public class PairedAccountReadsThroughItsComputerTest {
         assertNotNull(StatusWords.describe(UsageStatus.OK));
     }
 
+    @Test public void bridgeReadingKeepsItsDataTimeWhileLastContactAdvances() throws Exception {
+        pairTheComputer("br_clock", CURRENT_URL, DIGEST);
+        Account account = linkedAccount("br_clock", CURRENT_URL);
+        long dataTime = 1_700_000_000_000L;
+        provider.nextResult = UsageResult.builder().source(UsageResult.Source.BRIDGE)
+                .status(UsageStatus.STALE).updatedAt(dataTime).build();
+        AccountRefreshManager.RefreshOutcome outcome = refreshManager.refresh(account);
+        assertTrue(outcome.isSuccess());
+        assertEquals(dataTime, outcome.getResult().getUpdatedAt());
+        assertEquals(UsageStatus.STALE, outcome.getResult().getStatus());
+        assertTrue(bridges.touchedAt.get(0) > dataTime);
+    }
     // ------------------------------------------------------------------ fakes
 
     private static final class RecordingProvider implements UsageProvider {
 
         private AuthContext lastContext;
         private int fetchCount;
+        private UsageResult nextResult;
 
         void reset() {
             lastContext = null;
             fetchCount = 0;
+            nextResult = null;
         }
 
         @Override
@@ -244,6 +258,7 @@ public class PairedAccountReadsThroughItsComputerTest {
         public UsageResult fetchUsage(Account account, AuthContext authContext) {
             fetchCount++;
             lastContext = authContext;
+            if (nextResult != null) return nextResult;
             return UsageResult.builder()
                     .status(UsageStatus.OK)
                     .balance(new Balance(1.0d, "CNY", "1.00"))

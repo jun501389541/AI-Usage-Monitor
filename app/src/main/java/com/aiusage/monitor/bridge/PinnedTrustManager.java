@@ -22,6 +22,10 @@ import javax.net.ssl.X509TrustManager;
  */
 public final class PinnedTrustManager implements X509TrustManager {
 
+    public static final class PinMismatchException extends CertificateException {
+        public PinMismatchException(String message) { super(message); }
+    }
+
     private final FingerprintPin pin;
 
     public PinnedTrustManager(FingerprintPin pin) {
@@ -44,11 +48,8 @@ public final class PinnedTrustManager implements X509TrustManager {
             throw new CertificateException("电脑端没有出示证书");
         }
         if (!pin.matches(chain[0])) {
-            // Say what was expected and what arrived, in digest form only: the
-            // certificate itself can carry the computer's name, and a failure
-            // message ends up in logs and crash reports.
-            throw new CertificateException("证书指纹与配对时记录的不一致（期望 " + pin.tail()
-                    + "，实际 " + ManualTarget.tailOf(FingerprintPin.hexOf(chain[0])) + "）");
+            // Keep this distinct from a network failure without exposing certificate data.
+            throw new PinMismatchException("证书指纹与配对时记录的不一致，请核对电脑并重新配对。");
         }
     }
 

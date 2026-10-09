@@ -202,6 +202,16 @@ public class BridgeCodexDataSourceTest {
         assertFalse("rule 19: these two must stay distinguishable", a == b);
     }
 
+    @Test
+    public void changedPinnedCertificateRequiresPairingInsteadOfNetworkRetry() {
+        FakeTransport transport = new FakeTransport();
+        javax.net.ssl.SSLHandshakeException handshake = new javax.net.ssl.SSLHandshakeException("TLS rejected");
+        handshake.initCause(new com.aiusage.monitor.bridge.PinnedTrustManager.PinMismatchException("pin changed"));
+        transport.failure = new IOException("wrapped TLS failure", handshake);
+        assertEquals(UsageError.BRIDGE_PAIRING_REQUIRED,
+                errorOf(() -> new BridgeCodexDataSource(transport).fetch("http://h:1", "t", "", "a", 1L)));
+    }
+
     /**
      * A malformed address is the user's configuration mistake, and fixing it needs
      * no socket: the transport must not be touched at all.

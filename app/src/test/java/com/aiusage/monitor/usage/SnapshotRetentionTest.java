@@ -145,6 +145,15 @@ public class SnapshotRetentionTest {
     // ---------------------------------------------------------------- today
 
     @Test
+    public void lastArrivingCacheSurvivesAlongsideTheFreshestSuccessfulData() {
+        List<UsageSnapshot> rows = Arrays.asList(
+                row(1, ACCOUNT, NOW - 20 * DAY, true),
+                row(2, ACCOUNT, NOW - 19 * DAY, false),
+                row(3, ACCOUNT, NOW - 21 * DAY, true));
+        assertEquals(Collections.singletonList(2L), ids(rows, NOW));
+    }
+
+    @Test
     public void everyReadingFromTodayIsKept() {
         // A row from 00:05 today is inside the window anyway; what this pins is
         // that "today" is judged on the calendar, not on a 24-hour span, so a
