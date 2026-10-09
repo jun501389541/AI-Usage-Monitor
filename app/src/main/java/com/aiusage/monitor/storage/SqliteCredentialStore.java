@@ -45,6 +45,7 @@ public final class SqliteCredentialStore implements CredentialStore, AccountMana
         String id = "cred_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         long now = System.currentTimeMillis();
         SecureStorage.Sealed sealed = secureStorage.seal(payload);
+        requireAllowed(type, sealed);
 
         ContentValues values = new ContentValues();
         values.put("id", id);
@@ -64,6 +65,7 @@ public final class SqliteCredentialStore implements CredentialStore, AccountMana
             throw new AuthException(UsageError.INVALID_CREDENTIAL, "凭据 ID 为空");
         }
         SecureStorage.Sealed sealed = secureStorage.seal(payload);
+        requireAllowed(typeFor(credentialId), sealed);
 
         ContentValues values = new ContentValues();
         values.put("encrypted_payload", sealed.getPayload());
@@ -121,6 +123,8 @@ public final class SqliteCredentialStore implements CredentialStore, AccountMana
                 // in the database but never opened for a fetch - the default branch
                 // below answered every non-API_KEY type with UNSUPPORTED.
                 return new com.aiusage.monitor.auth.BridgeAuthAdapter().adapt(plaintext);
+            case OAUTH:
+                return new com.aiusage.monitor.auth.OAuthAuthAdapter().adapt(plaintext);
             default:
                 throw new AuthException(
                         UsageError.UNSUPPORTED, "暂不支持该认证方式：" + effective);
@@ -139,7 +143,7 @@ public final class SqliteCredentialStore implements CredentialStore, AccountMana
     @Override
     public boolean isUsable(String credentialId) {
         try {
-            open(credentialId, AuthType.API_KEY);
+            open(credentialId, typeFor(credentialId));
             return true;
         } catch (AuthException exception) {
             return false;
@@ -164,5 +168,28 @@ public final class SqliteCredentialStore implements CredentialStore, AccountMana
             }
         }
         return false;
+    }
+
+    private void requireAllowed(AuthType type, SecureStorage.Sealed sealed) throws AuthException {
+        try {
+            CredentialProtectionPolicy.requireAcceptable(type, sealed.getProtection());
+        } catch (IllegalStateException rejected) {
+            throw new AuthException(UsageError.AUTH_EXPIRED,
+                    "OAuth 令牌无法通过 Android Keystore 安全保存", rejected);
+        }
+    }
+
+    private AuthType typeFor(String credentialId) {
+        if (credentialId == null || credentialId.isEmpty()) return AuthType.CUSTOM;
+        try (Cursor cursor = database.getReadableDatabase().query(
+                Database.TABLE_CREDENTIALS, new String[]{"type"}, "id = ?",
+                new String[]{credentialId}, null, null, null)) {
+            if (!cursor.moveToFirst()) return AuthType.CUSTOM;
+            try {
+                return AuthType.valueOf(cursor.getString(0));
+            } catch (RuntimeException invalid) {
+                return AuthType.CUSTOM;
+            }
+        }
     }
 }

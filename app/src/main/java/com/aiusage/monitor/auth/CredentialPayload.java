@@ -64,6 +64,55 @@ public final class CredentialPayload {
         }
     }
 
+    /** Builds the independently encrypted OAuth payload used by phone Direct. */
+    public static String forOAuth(String accessToken, String refreshToken, String idToken,
+                                  long expiresAt, String accountId, String email)
+            throws AuthException {
+        return forOAuth(accessToken, refreshToken, idToken, expiresAt, accountId, email, "");
+    }
+
+    public static String forOAuth(String accessToken, String refreshToken, String idToken,
+                                  long expiresAt, String accountId, String email, String workspace)
+            throws AuthException {
+        String access = accessToken == null ? "" : accessToken.trim();
+        String refresh = refreshToken == null ? "" : refreshToken.trim();
+        if (access.isEmpty() || refresh.isEmpty()) {
+            throw new AuthException(UsageError.INVALID_CREDENTIAL,
+                    "OAuth 凭据需要访问令牌和续期令牌");
+        }
+        try {
+            JSONObject json = new JSONObject();
+            json.put("accessToken", access);
+            json.put("refreshToken", refresh);
+            json.put("idToken", idToken == null ? "" : idToken);
+            json.put("expiresAt", Math.max(0L, expiresAt));
+            json.put("oauthAccountId", accountId == null ? "" : accountId);
+            json.put("oauthEmail", email == null ? "" : email);
+            json.put("oauthWorkspace", workspace == null ? "" : workspace);
+            return json.toString();
+        } catch (JSONException exception) {
+            throw new AuthException(UsageError.UNKNOWN, "无法编码 OAuth 凭据", exception);
+        }
+    }
+
+    public static String extractOAuthAccessToken(String payload) throws AuthException {
+        return requireOAuthField(payload, "accessToken", "访问令牌");
+    }
+
+    public static String extractOAuthRefreshToken(String payload) throws AuthException {
+        return requireOAuthField(payload, "refreshToken", "续期令牌");
+    }
+
+    private static String requireOAuthField(String payload, String key, String label)
+            throws AuthException {
+        String value = parse(payload).optString(key, "").trim();
+        if (value.isEmpty()) {
+            throw new AuthException(UsageError.INVALID_CREDENTIAL,
+                    "OAuth 凭据中没有" + label);
+        }
+        return value;
+    }
+
     public static String forRemoteDevice(String token, String accountId) throws AuthException {
         if (accountId == null || accountId.isEmpty()) return forDeviceToken(token);
         if (!accountId.matches("[0-9a-f]{64}")) {

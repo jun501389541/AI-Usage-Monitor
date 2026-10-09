@@ -84,9 +84,11 @@ public class CodexProviderTest {
         assertTrue(capabilities.reportsQuotaWindows());
         assertEquals(5 * 60 * 1000L, capabilities.getRecommendedRefreshIntervalMs());
         assertTrue(capabilities.supportsAuthType(AuthType.BRIDGE_TOKEN));
+        assertTrue("phone-side Codex OAuth is an experimental supported source",
+                capabilities.supportsAuthType(AuthType.OAUTH));
         assertFalse("an API key cannot reach Codex",
                 capabilities.supportsAuthType(AuthType.API_KEY));
-        assertEquals(1, capabilities.getSupportedAuthTypes().size());
+        assertEquals(2, capabilities.getSupportedAuthTypes().size());
     }
 
     @Test

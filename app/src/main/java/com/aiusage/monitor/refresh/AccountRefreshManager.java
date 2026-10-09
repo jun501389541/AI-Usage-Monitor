@@ -2,6 +2,8 @@ package com.aiusage.monitor.refresh;
 
 import com.aiusage.monitor.account.AccountManager;
 import com.aiusage.monitor.auth.AuthException;
+import com.aiusage.monitor.auth.AuthType;
+import com.aiusage.monitor.auth.CodexOAuthClient;
 import com.aiusage.monitor.model.Account;
 import com.aiusage.monitor.model.UsageError;
 import com.aiusage.monitor.model.UsageResult;
@@ -14,6 +16,12 @@ import com.aiusage.monitor.usage.UsageRepository;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+
+import com.aiusage.monitor.provider.codex.CodexProvider;
 
 /**
  * The one refresh path. Spec §37.
@@ -50,6 +58,8 @@ public final class AccountRefreshManager {
      * happens to be in its credential.
      */
     private final com.aiusage.monitor.bridge.BridgeRepository bridges;
+    private final CodexOAuthClient oauthClient = new CodexOAuthClient();
+    private final ConcurrentMap<String, FutureTask<RefreshOutcome>> inFlight = new ConcurrentHashMap<>();
     private RefreshSuccessListener refreshSuccessListener;
 
     public AccountRefreshManager(AccountManager accountManager,
@@ -206,6 +216,28 @@ public final class AccountRefreshManager {
 
     /** Refreshes one account that the caller already loaded. */
     public RefreshOutcome refresh(Account account) {
+        if (account == null) return RefreshOutcome.failed("", UsageError.UNKNOWN, null);
+        String accountId = account.getId();
+        FutureTask<RefreshOutcome> task = new FutureTask<>(() -> refreshOnce(account));
+        FutureTask<RefreshOutcome> existing = inFlight.putIfAbsent(accountId, task);
+        if (existing != null) task = existing;
+        else task.run();
+        try {
+            return task.get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return RefreshOutcome.failed(accountId, UsageError.UNKNOWN, "刷新等待已取消");
+        } catch (ExecutionException failed) {
+            return RefreshOutcome.failed(accountId, UsageError.UNKNOWN, null);
+        } finally {
+            // A waiter may be interrupted while the shared owner is still doing
+            // network I/O. Keep the task registered until it completes, or a
+            // later app/widget/alarm trigger could start a duplicate request.
+            if (task.isDone()) inFlight.remove(accountId, task);
+        }
+    }
+
+    private RefreshOutcome refreshOnce(Account account) {
         if (account == null) {
             return RefreshOutcome.failed("", UsageError.UNKNOWN, null);
         }
@@ -226,6 +258,14 @@ public final class AccountRefreshManager {
                 return RefreshOutcome.abandoned(accountId);
             }
             generation = accountManager.credentialGeneration(accountId);
+        }
+
+        if (CodexProvider.ID.equals(current.getProviderId()) && current.isDirectEnabled()) {
+            return refreshDirectFirst(current, generation);
+        }
+        if (CodexProvider.ID.equals(current.getProviderId()) && current.getAuthType() == AuthType.OAUTH) {
+            return RefreshOutcome.failed(accountId, UsageError.INVALID_CREDENTIAL,
+                    "实验性手机直连已关闭");
         }
 
         AuthContext authContext;
@@ -249,6 +289,88 @@ public final class AccountRefreshManager {
         return fetch(current, authContext, generation);
     }
 
+    private RefreshOutcome refreshDirectFirst(Account account, long generation) {
+        String accountId = account.getId();
+        if (account.isDirectNeedsAuth()) {
+            return directFailedThenBridge(account, generation, UsageError.AUTH_EXPIRED,
+                    "Codex 手机授权已失效，请重新授权", false);
+        }
+        AuthContext direct;
+        try {
+            direct = accountManager.openDirectOAuthCredential(account);
+        } catch (AuthException invalid) {
+            return directFailedThenBridge(account, generation, invalid.getError(), invalid.getMessage(), true);
+        }
+
+        long expiresAt = parseLong(direct.get(AuthContext.KEY_EXPIRES_AT));
+        if (expiresAt <= System.currentTimeMillis() + 120_000L) {
+            try {
+                CodexOAuthClient.Tokens renewed = oauthClient.refresh(
+                        direct.get(AuthContext.KEY_REFRESH_TOKEN), direct);
+                if (!accountManager.rotateDirectOAuthCredential(accountId, generation,
+                        renewed.toCredentialPayload())) {
+                    return RefreshOutcome.abandoned(accountId);
+                }
+                generation = accountManager.credentialGeneration(accountId);
+                account = accountManager.find(accountId);
+                if (account == null) return RefreshOutcome.abandoned(accountId);
+                direct = renewed.toAuthContext();
+            } catch (AuthException renewalFailure) {
+                return directFailedThenBridge(account, generation,
+                        renewalFailure.getError(), renewalFailure.getMessage(), true);
+            }
+        }
+
+        RefreshOutcome directOutcome = fetch(account, direct, generation);
+        if (directOutcome.isSuccess() || directOutcome.isAbandoned()) return directOutcome;
+        return directFailedThenBridge(account, generation,
+                directOutcome.getError(), directOutcome.getMessage(), false);
+    }
+
+    private RefreshOutcome directFailedThenBridge(Account account, long generation,
+                                                  UsageError directError, String directMessage,
+                                                  boolean recordDirectFailure) {
+        String accountId = account.getId();
+        if (directError == UsageError.AUTH_EXPIRED || directError == UsageError.INVALID_CREDENTIAL
+                || directError == UsageError.PERMISSION_DENIED) {
+            accountManager.setDirectNeedsAuth(accountId, true);
+        }
+        boolean hasBridge = account.getAuthType() == AuthType.BRIDGE_TOKEN
+                && account.getCredentialId() != null && !account.getCredentialId().isEmpty();
+        if (recordDirectFailure) {
+            synchronized (accountManager.writeMonitor()) {
+                if (isVoid(accountId, generation)) return RefreshOutcome.abandoned(accountId);
+                RefreshOutcome failed = recordFailure(accountId, AuthType.OAUTH, directError, directMessage);
+                if (!hasBridge) return failed;
+            }
+        } else if (!hasBridge) {
+            return RefreshOutcome.failed(accountId, directError, directMessage);
+        }
+
+        Account current;
+        synchronized (accountManager.writeMonitor()) {
+            current = accountManager.find(accountId);
+            if (current == null || accountManager.credentialGeneration(accountId) != generation) {
+                return RefreshOutcome.abandoned(accountId);
+            }
+        }
+        try {
+            AuthContext bridge = accountManager.openCredential(current);
+            return fetch(current, bridge, generation);
+        } catch (AuthException bridgeFailure) {
+            synchronized (accountManager.writeMonitor()) {
+                if (isVoid(accountId, generation)) return RefreshOutcome.abandoned(accountId);
+                return recordFailure(accountId, AuthType.BRIDGE_TOKEN,
+                        bridgeFailure.getError(), bridgeFailure.getMessage());
+            }
+        }
+    }
+
+    private static long parseLong(String value) {
+        try { return Long.parseLong(value); }
+        catch (RuntimeException invalid) { return 0L; }
+    }
+
     /** The provider call itself, shared by both entry points. */
     private RefreshOutcome fetch(Account account, AuthContext authContext, long generation) {
         String accountId = account.getId();
@@ -258,7 +380,8 @@ public final class AccountRefreshManager {
         // changed networks」 edits, and the digest inside it is what the connection has
         // to be pinned to (A5/A9). An account with no bridge_id is the hand-typed
         // debug path and keeps Phase 6's behaviour exactly.
-        String bridgeId = account.getBridgeId();
+        String bridgeId = authContext.getAuthType() == AuthType.BRIDGE_TOKEN
+                ? account.getBridgeId() : "";
         com.aiusage.monitor.model.Bridge bridge = null;
         if (bridgeId != null && !bridgeId.isEmpty()) {
             if (bridges == null) {
@@ -266,7 +389,7 @@ public final class AccountRefreshManager {
                     if (isVoid(accountId, generation)) {
                         return RefreshOutcome.abandoned(accountId);
                     }
-                    return recordFailure(accountId, account.getAuthType(),
+                    return recordFailure(accountId, authContext.getAuthType(),
                             UsageError.BRIDGE_PAIRING_REQUIRED,
                             "这个账户指向一台已配对的电脑，但本机没有配对的存储");
                 }
@@ -280,7 +403,7 @@ public final class AccountRefreshManager {
                     if (isVoid(accountId, generation)) {
                         return RefreshOutcome.abandoned(accountId);
                     }
-                    return recordFailure(accountId, account.getAuthType(),
+                    return recordFailure(accountId, authContext.getAuthType(),
                             UsageError.BRIDGE_PAIRING_REQUIRED, null);
                 }
             }
@@ -302,7 +425,7 @@ public final class AccountRefreshManager {
                 if (isVoid(accountId, generation)) {
                     return RefreshOutcome.abandoned(accountId);
                 }
-                return recordFailure(accountId, account.getAuthType(), exception.getError(), exception.getMessage());
+                return recordFailure(accountId, authContext.getAuthType(), exception.getError(), exception.getMessage());
             }
         }
 
@@ -341,6 +464,9 @@ public final class AccountRefreshManager {
                     // landing now cannot be stamped afterwards.
                     bridges.touchLastSeen(bridge.getId(), System.currentTimeMillis());
                 }
+                if (authContext.getAuthType() == AuthType.OAUTH) {
+                    accountManager.setDirectNeedsAuth(accountId, false);
+                }
 
                 // Daily usage is derived from the balance reading, per account.
                 if (stamped.getBalance() != null && !stamped.getBalance().getRawText().isEmpty()) {
@@ -364,7 +490,7 @@ public final class AccountRefreshManager {
                 if (isVoid(accountId, generation)) {
                     return RefreshOutcome.abandoned(accountId);
                 }
-                return recordFailure(accountId, account.getAuthType(), exception.getError(), exception.getMessage());
+                return recordFailure(accountId, authContext.getAuthType(), exception.getError(), exception.getMessage());
             }
         } catch (RuntimeException exception) {
             // A provider bug must not take down the refresh of every other
@@ -373,7 +499,7 @@ public final class AccountRefreshManager {
                 if (isVoid(accountId, generation)) {
                     return RefreshOutcome.abandoned(accountId);
                 }
-                return recordFailure(accountId, account.getAuthType(), UsageError.UNKNOWN, null);
+                return recordFailure(accountId, authContext.getAuthType(), UsageError.UNKNOWN, null);
             }
         }
     }
@@ -423,6 +549,19 @@ public final class AccountRefreshManager {
             outcomes.add(refresh(account));
         }
         return outcomes;
+    }
+
+    /** Refreshes opted-in Direct accounts while leaving unrelated Bridge-only accounts idle. */
+    public List<RefreshOutcome> refreshDirectEnabled() {
+        List<RefreshOutcome> outcomes = new ArrayList<>();
+        for (Account account : accountManager.listDirectRefreshEnabled()) {
+            outcomes.add(refresh(account));
+        }
+        return outcomes;
+    }
+
+    public boolean hasDirectRefreshAccounts() {
+        return !accountManager.listDirectRefreshEnabled().isEmpty();
     }
 
     /**

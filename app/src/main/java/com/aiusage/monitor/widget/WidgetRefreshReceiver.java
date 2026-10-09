@@ -56,11 +56,16 @@ public final class WidgetRefreshReceiver extends BroadcastReceiver {
         final PendingResult pendingResult = goAsync();
         final Context appContext = context.getApplicationContext();
         EXECUTOR.execute(() -> {
-            RefreshDuty duty = RefreshDuty.forAlarm(midnight,
-                    WidgetUpdateManager.hasWidgets(appContext));
+            AppGraph graph = AppGraph.get(appContext);
+            graph.ensureMigrated();
+            boolean hasWidgets = WidgetUpdateManager.hasWidgets(appContext);
+            RefreshDuty duty = RefreshDuty.forAlarm(midnight, hasWidgets,
+                    graph.refreshManager().hasDirectRefreshAccounts());
             try {
                 if (duty == RefreshDuty.REFRESH_AND_REDRAW) {
-                    refresh(appContext);
+                    refresh(appContext, false);
+                } else if (duty == RefreshDuty.DIRECT_ONLY) {
+                    refresh(appContext, true);
                 } else if (duty == RefreshDuty.REDRAW_ONLY) {
                     // Midnight changes what "today" means, not what was read. The
                     // numbers come from the stored rows, so this redraws and asks
@@ -153,18 +158,21 @@ public final class WidgetRefreshReceiver extends BroadcastReceiver {
      * successes and failures, so a widget redrawn afterwards shows the newest
      * successful reading and never a blank because one attempt failed. Spec §39.
      */
-    private static void refresh(Context context) {
+    private static void refresh(Context context, boolean directOnly) {
         AppGraph graph = AppGraph.get(context);
         // A user who never opens the app still expects their upgraded widget to
         // work, so the legacy import is attempted on this path too.
         graph.ensureMigrated();
-        graph.refreshManager().refreshAll();
+        if (directOnly) graph.refreshManager().refreshDirectEnabled();
+        else graph.refreshManager().refreshAll();
         // Retention runs after the refresh, on this executor, and nowhere else:
         // the readings it judges were just written, it is the one path guaranteed
         // to run without the app being opened, and a UI thread has no business
         // deleting rows. Spec §26 keeps history; this is what stops "keep
         // history" from meaning "never delete anything".
         graph.usageRepository().prune(new SnapshotRetention(), System.currentTimeMillis());
-        new WidgetUpdateManager(context).updateAllWidgets();
+        if (WidgetUpdateManager.hasWidgets(context)) {
+            new WidgetUpdateManager(context).updateAllWidgets();
+        }
     }
 }

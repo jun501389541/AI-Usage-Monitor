@@ -39,11 +39,15 @@ import com.aiusage.monitor.usage.UsageRepository;
 import com.aiusage.monitor.util.Money;
 import com.aiusage.monitor.util.StatusWords;
 import com.aiusage.monitor.widget.WidgetUpdateManager;
+import com.aiusage.monitor.widget.WidgetRefreshScheduler;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 /**
  * The account list, and the app's launcher. Spec §51.
@@ -73,7 +77,11 @@ public final class AccountListActivity extends Activity {
     private ItemTouchHelper itemTouchHelper;
     private TextView emptyView;
     private TextView refreshAllButton;
+    private AccountRefreshLayout swipeRefreshLayout;
     private boolean refreshing;
+    private boolean draggingAccounts;
+    private boolean accountsRenderPending;
+    private int refreshIndicatorStatusBarHeight = -1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -103,6 +111,13 @@ public final class AccountListActivity extends Activity {
     }
 
     private void buildInterface() {
+        swipeRefreshLayout = new AccountRefreshLayout(this);
+        swipeRefreshLayout.setBackgroundColor(UiKit.COLOR_BG);
+        swipeRefreshLayout.setColorSchemeColors(UiKit.COLOR_TEXT);
+        swipeRefreshLayout.setProgressBackgroundColorSchemeColor(UiKit.COLOR_CARD);
+        swipeRefreshLayout.setEnabled(false);
+        positionRefreshIndicator(0);
+
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setScrollbarFadingEnabled(true);
@@ -111,6 +126,11 @@ public final class AccountListActivity extends Activity {
         scroll.setBackgroundColor(UiKit.COLOR_BG);
         scroll.setPadding(UiKit.dp(this, 20), UiKit.dp(this, 22),
                 UiKit.dp(this, 20), UiKit.dp(this, 22));
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        // The whole page scrolls; the wrap-content account list has no own scroll range.
+        swipeRefreshLayout.setOnChildScrollUpCallback((parent, child) ->
+                draggingAccounts || scroll.canScrollVertically(-1));
+        swipeRefreshLayout.setOnRefreshListener(this::refreshAll);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -156,8 +176,6 @@ public final class AccountListActivity extends Activity {
         });
         listRecyclerView.setAdapter(adapter);
         itemTouchHelper = new ItemTouchHelper(new ItemTouchHelper.Callback() {
-            private boolean dragging;
-
             @Override public int getMovementFlags(RecyclerView recyclerView, RecyclerView.ViewHolder holder) {
                 int directions = ItemTouchHelper.UP | ItemTouchHelper.DOWN;
                 return makeMovementFlags(directions, 0);
@@ -183,7 +201,8 @@ public final class AccountListActivity extends Activity {
             @Override public void onSelectedChanged(RecyclerView.ViewHolder holder, int actionState) {
                 super.onSelectedChanged(holder, actionState);
                 if (actionState == ItemTouchHelper.ACTION_STATE_DRAG) {
-                    dragging = true;
+                    draggingAccounts = true;
+                    listRecyclerView.getParent().requestDisallowInterceptTouchEvent(true);
                     adapter.closeRevealed();
                     holder.itemView.setAlpha(0.88f);
                 }
@@ -192,14 +211,21 @@ public final class AccountListActivity extends Activity {
             @Override public void clearView(RecyclerView recyclerView, RecyclerView.ViewHolder holder) {
                 super.clearView(recyclerView, holder);
                 holder.itemView.setAlpha(1f);
-                if (dragging) {
-                    dragging = false;
+                if (draggingAccounts) {
                     accountManager.reorder(adapter.orderedIds());
+                    draggingAccounts = false;
+                    if (accountsRenderPending) {
+                        // clearView can run during RecyclerView's layout/recovery animation.
+                        recyclerView.post(() -> {
+                            if (!isFinishing() && !isDestroyed()) renderAccounts();
+                        });
+                    }
                 }
             }
         });
         itemTouchHelper.attachToRecyclerView(listRecyclerView);
         content.addView(listRecyclerView, UiKit.matchWrap(this, 12));
+        swipeRefreshLayout.setContent(scroll, listRecyclerView);
 
         emptyView = UiKit.text(this, "还没有账户。点击下方按钮添加 AI 账户。", 13,
                 UiKit.COLOR_MUTED, Typeface.NORMAL);
@@ -243,8 +269,17 @@ public final class AccountListActivity extends Activity {
         privacy.setLineSpacing(UiKit.dp(this, 2), 1.15f);
         content.addView(privacy, UiKit.matchWrap(this, 18));
 
-        setContentView(scroll);
+        setContentView(swipeRefreshLayout);
         applyInsets(scroll);
+    }
+
+    private void positionRefreshIndicator(int statusBarHeight) {
+        if (refreshIndicatorStatusBarHeight == statusBarHeight) return;
+        refreshIndicatorStatusBarHeight = statusBarHeight;
+        swipeRefreshLayout.setProgressViewOffset(false,
+                statusBarHeight - UiKit.dp(this, 40), statusBarHeight + UiKit.dp(this, 32));
+        // Repositioning resets the component; retain any active request's indicator.
+        if (refreshing) swipeRefreshLayout.setRefreshing(true);
     }
 
     private void applyInsets(View root) {
@@ -254,6 +289,7 @@ public final class AccountListActivity extends Activity {
                 Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
                 view.setPadding(UiKit.dp(this, 20), UiKit.dp(this, 22) + bars.top,
                         UiKit.dp(this, 20), UiKit.dp(this, 22) + bars.bottom);
+                positionRefreshIndicator(bars.top);
                 return windowInsets;
             });
             root.requestApplyInsets();
@@ -268,6 +304,8 @@ public final class AccountListActivity extends Activity {
         // without this screen having to be told about it.
         renderAccounts();
         NotificationScheduler.reconcile(this);
+        WidgetRefreshScheduler.schedule(this);
+        refreshWhenOpened();
     }
 
     @Override
@@ -278,20 +316,29 @@ public final class AccountListActivity extends Activity {
 
     /** Rebuilds the list from storage. Never performs I/O on a network. */
     private void renderAccounts() {
+        // Refresh completion must not replace the adapter's in-flight drag order.
+        if (draggingAccounts) {
+            accountsRenderPending = true;
+            return;
+        }
+        accountsRenderPending = false;
         List<Account> accounts = accountManager.list();
         long interval = graph.settings().backgroundRefreshIntervalMs();
 
         emptyView.setVisibility(accounts.isEmpty() ? View.VISIBLE : View.GONE);
         refreshAllButton.setVisibility(accounts.isEmpty() ? View.GONE : View.VISIBLE);
+        boolean hasEnabledAccount = false;
         List<SwipeAccountAdapter.Row> rows = new ArrayList<>();
         for (Account account : accounts) {
+            hasEnabledAccount |= account.isEnabled();
             AccountRefreshManager.AccountView view = refreshManager.view(account.getId());
             UsageResult latest = view.lastSuccess;
             rows.add(new SwipeAccountAdapter.Row(account.getId(), account.getDisplayName(),
-                    balanceText(account, latest), usageText(account, latest), statusText(view, interval),
+                    balanceText(account, latest), usageText(account, latest), statusText(account, view, interval),
                     account.isEnabled(), accountManager.isCredentialDegraded(account), account.isPinned()));
         }
         adapter.setRows(rows);
+        swipeRefreshLayout.setEnabled(hasEnabledAccount);
     }
 
     private String balanceText(Account account, UsageResult result) {
@@ -341,19 +388,41 @@ public final class AccountListActivity extends Activity {
      * request: the list is a summary, and a screen that refreshes N accounts
      * just by being opened would burn the user's quota.
      */
-    private String statusText(AccountRefreshManager.AccountView view, long intervalMs) {
+    private String statusText(Account account, AccountRefreshManager.AccountView view, long intervalMs) {
         // The staleness judgement lives in AccountView.displayStatus and the
         // wording in StatusWords, both shared with the widget path: the two
         // surfaces must not describe the same stored row differently.
         UsageResult latest = view.lastAttempt != null ? view.lastAttempt : view.lastSuccess;
         if (latest == null) {
-            return StatusWords.NEVER_QUERIED;
+            return account.isDirectNeedsAuth() ? "Direct 需重新授权 · 尚无成功读数"
+                    : StatusWords.NEVER_QUERIED;
         }
         // A retained old balance must never be presented as current: when the
         // newest attempt failed, say so next to the value the row still shows.
-        return StatusWords.describe(
+        String status = StatusWords.describe(
                 view.displayStatus(intervalMs, System.currentTimeMillis()),
                 view.showingRetainedData());
+        StringBuilder source = new StringBuilder();
+        if (account.isDirectNeedsAuth()) source.append("Direct 需重新授权");
+        if (view.lastSuccess != null) {
+            if (source.length() > 0) source.append(" · ");
+            source.append(sourceLabel(view.lastSuccess.getSource()))
+                    .append(" · 更新于 ")
+                    .append(new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                            .format(new Date(view.lastSuccess.getUpdatedAt())));
+        }
+        if (source.length() == 0) return status;
+        return source + " · " + status;
+    }
+
+    private static String sourceLabel(UsageResult.Source source) {
+        if (source == UsageResult.Source.DIRECT_API) return "手机 Direct";
+        if (source == UsageResult.Source.BRIDGE) return "电脑 Bridge";
+        return "缓存快照";
+    }
+
+    private void refreshWhenOpened() {
+        refreshAll(false);
     }
 
     private void showAccountMenu(Account account) {
@@ -483,33 +552,55 @@ public final class AccountListActivity extends Activity {
 
     /** Refreshes every enabled account through the one permitted chain. */
     private void refreshAll() {
-        if (refreshing) {
+        refreshAll(true);
+    }
+
+    private void setRefreshing(boolean value) {
+        refreshing = value;
+        swipeRefreshLayout.setRefreshing(value);
+        refreshAllButton.setEnabled(!value);
+        refreshAllButton.setText(value ? "正在刷新…" : "刷新全部账户");
+        refreshAllButton.setAlpha(value ? 0.55f : 1f);
+    }
+
+    private void refreshAll(boolean showFeedback) {
+        if (refreshing) return;
+        if (accountManager.listEnabled().isEmpty()) {
+            setRefreshing(false);
+            if (showFeedback) Toast.makeText(this, "没有已启用的账户", Toast.LENGTH_SHORT).show();
             return;
         }
-        refreshing = true;
-        refreshAllButton.setText("正在刷新…");
-        refreshAllButton.setAlpha(0.55f);
+        setRefreshing(true);
 
         executor.execute(() -> {
-            List<AccountRefreshManager.RefreshOutcome> outcomes = refreshManager.refreshAll();
             int succeeded = 0;
-            for (AccountRefreshManager.RefreshOutcome outcome : outcomes) {
-                if (outcome.isSuccess()) {
-                    succeeded++;
+            int total = 0;
+            boolean failed = false;
+            try {
+                List<AccountRefreshManager.RefreshOutcome> outcomes = refreshManager.refreshAll();
+                total = outcomes.size();
+                for (AccountRefreshManager.RefreshOutcome outcome : outcomes) {
+                    if (outcome.isSuccess()) succeeded++;
                 }
+            } catch (RuntimeException error) {
+                // A storage/scheduler failure must also release the loading state.
+                failed = true;
             }
             final int ok = succeeded;
-            final int total = outcomes.size();
+            final int count = total;
+            final boolean refreshFailed = failed;
             runOnUiThread(() -> {
-                refreshing = false;
-                refreshAllButton.setText("刷新全部账户");
-                refreshAllButton.setAlpha(1f);
+                if (isFinishing() || isDestroyed()) return;
+                setRefreshing(false);
                 // Only the widgets bound to the accounts that were refreshed
                 // are redrawn, so an unrelated widget does not flicker. §38.
                 widgetUpdateManager.updateAllWidgets();
                 renderAccounts();
-                Toast.makeText(this, "刷新完成：" + ok + "/" + total + " 个账户成功",
-                        Toast.LENGTH_SHORT).show();
+                if (showFeedback) {
+                    Toast.makeText(this, refreshFailed ? "刷新失败，请稍后重试"
+                                    : "刷新完成：" + ok + "/" + count + " 个账户成功",
+                            Toast.LENGTH_SHORT).show();
+                }
             });
         });
     }

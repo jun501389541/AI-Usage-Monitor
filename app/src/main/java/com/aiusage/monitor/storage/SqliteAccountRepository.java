@@ -56,6 +56,10 @@ public final class SqliteAccountRepository implements AccountRepository {
         values.put("auth_type", account.getAuthType().name());
         values.put("credential_id", account.getCredentialId());
         values.put("bridge_id", account.getBridgeId());
+        values.put("direct_credential_id", account.getDirectCredentialId());
+        values.put("direct_identity_hash", account.getDirectIdentityHash());
+        values.put("direct_enabled", account.isDirectEnabled() ? 1 : 0);
+        values.put("direct_needs_auth", account.isDirectNeedsAuth() ? 1 : 0);
         values.put("enabled", account.isEnabled() ? 1 : 0);
         values.put("pinned", account.isPinned() ? 1 : 0);
         values.put("sort_order", account.getSortOrder());
@@ -114,7 +118,8 @@ public final class SqliteAccountRepository implements AccountRepository {
         try (Cursor cursor = database.getReadableDatabase().query(
                 Database.TABLE_ACCOUNTS,
                 new String[]{"id", "provider_id", "display_name", "auth_type", "credential_id",
-                        "bridge_id", "enabled", "pinned", "sort_order", "created_at", "updated_at"},
+                        "bridge_id", "enabled", "pinned", "sort_order", "created_at", "updated_at",
+                        "direct_credential_id", "direct_identity_hash", "direct_enabled", "direct_needs_auth"},
                 selection,
                 args,
                 null, null,
@@ -132,6 +137,10 @@ public final class SqliteAccountRepository implements AccountRepository {
                         .sortOrder(cursor.getInt(8))
                         .createdAt(cursor.getLong(9))
                         .updatedAt(cursor.getLong(10))
+                        .directCredentialId(cursor.getString(11))
+                        .directIdentityHash(cursor.getString(12))
+                        .directEnabled(cursor.getInt(13) == 1)
+                        .directNeedsAuth(cursor.getInt(14) == 1)
                         .build());
             }
         }

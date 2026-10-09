@@ -2,6 +2,7 @@ package com.aiusage.monitor.ui.account;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Insets;
@@ -37,6 +38,7 @@ import com.aiusage.monitor.provider.codex.CodexProvider;
 import com.aiusage.monitor.provider.deepseek.DeepSeekProvider;
 import com.aiusage.monitor.ui.UiKit;
 import com.aiusage.monitor.usage.UsageRepository;
+import com.aiusage.monitor.widget.WidgetRefreshScheduler;
 import com.aiusage.monitor.widget.WidgetUpdateManager;
 
 /**
@@ -59,6 +61,7 @@ public final class AccountEditActivity extends Activity {
 
     /** A pairing started from this form; its result is an account that already exists. */
     private static final int REQUEST_PAIR = 41;
+    private static final int REQUEST_DIRECT = 42;
 
     private AppGraph graph;
     private AccountManager accountManager;
@@ -73,9 +76,13 @@ public final class AccountEditActivity extends Activity {
     private EditText bridgeTokenInput;
     private CheckBox rememberKey;
     private CheckBox enabledBox;
+    private CheckBox directEnabledBox;
     private LinearLayout warningBox;
     private LinearLayout keyCard;
     private LinearLayout bridgeCard;
+    private LinearLayout directCard;
+    private TextView directSummary;
+    private TextView directUnlinkButton;
     private TextView subtitle;
     private TextView privacy;
     private TextView providerHint;
@@ -305,6 +312,31 @@ public final class AccountEditActivity extends Activity {
         bridgeCard.addView(bridgeTokenInput, UiKit.matchWrap(this, 10));
         content.addView(bridgeCard, UiKit.matchWrap(this, 16));
 
+        // ---------------------------------------------------- phone Direct
+        directCard = UiKit.card(this);
+        directCard.addView(label("实验性手机直连"), UiKit.matchWrap(this, 0));
+        TextView directHint = UiKit.text(this,
+                "手机独立通过 OpenAI 官方设备码授权并查询额度。Direct 成功优先；失败时使用整份 Bridge 快照。浏览器可能要求登录，本功能不会读取 ChatGPT App 的登录凭据。",
+                11, UiKit.COLOR_HINT, Typeface.NORMAL);
+        directHint.setLineSpacing(UiKit.dp(this, 2), 1.15f);
+        directCard.addView(directHint, UiKit.matchWrap(this, 8));
+        directSummary = UiKit.text(this, "尚未授权", 12, UiKit.COLOR_MUTED, Typeface.NORMAL);
+        directSummary.setLineSpacing(UiKit.dp(this, 2), 1.12f);
+        directCard.addView(directSummary, UiKit.matchWrap(this, 8));
+        directEnabledBox = new CheckBox(this);
+        directEnabledBox.setText("启用手机 Direct 优先刷新");
+        directEnabledBox.setTextSize(14);
+        directEnabledBox.setTextColor(UiKit.COLOR_TEXT);
+        directEnabledBox.setButtonTintList(ColorStateList.valueOf(UiKit.COLOR_BUTTON));
+        directCard.addView(directEnabledBox, UiKit.matchWrap(this, 8));
+        TextView directLoginButton = UiKit.actionButton(this, "用手机授权 Codex", true);
+        directLoginButton.setOnClickListener(view -> openDirectAuth());
+        directCard.addView(directLoginButton, UiKit.matchHeight(this, 50, 8));
+        directUnlinkButton = UiKit.actionButton(this, "解除手机授权", false);
+        directUnlinkButton.setOnClickListener(view -> confirmUnlinkDirect());
+        directCard.addView(directUnlinkButton, UiKit.matchHeight(this, 46, 8));
+        content.addView(directCard, UiKit.matchWrap(this, 16));
+
         // ------------------------------------------------------- enabled
         LinearLayout enabledCard = UiKit.card(this);
 
@@ -361,9 +393,11 @@ public final class AccountEditActivity extends Activity {
     /** Shows only the fields the chosen provider has, and says why in its own words. */
     private void applyProviderSelection() {
         boolean codex = CodexProvider.ID.equals(providerId);
+        boolean directOnly = isDirectOnlyAccount();
 
         keyCard.setVisibility(codex ? View.GONE : View.VISIBLE);
-        bridgeCard.setVisibility(codex ? View.VISIBLE : View.GONE);
+        bridgeCard.setVisibility(codex && !directOnly ? View.VISIBLE : View.GONE);
+        directCard.setVisibility(codex ? View.VISIBLE : View.GONE);
 
         styleProviderChip(deepSeekChip, !codex);
         styleProviderChip(codexChip, codex);
@@ -386,7 +420,7 @@ public final class AccountEditActivity extends Activity {
                     : "服务商不可更改：这个账户的历史是由它原来的服务商写入的。");
         } else {
             providerHint.setText(codex
-                    ? "OpenAI Codex 没有余额，只有 5 小时与每周额度窗口，需要通过本机运行的 AI Usage Bridge 读取。"
+                    ? "Codex 可继续通过电脑端 Bridge 读取，也可选择实验性手机直连。手机直连只在此开关启用后参与刷新。"
                     : "DeepSeek 使用平台 API Key 直接查询余额。");
         }
 
@@ -396,8 +430,13 @@ public final class AccountEditActivity extends Activity {
                         : "为这个 DeepSeek API Key 起一个名字，便于在列表中区分。"));
 
         privacy.setText(codex
-                ? "地址与令牌只发给本机 Bridge，不会离开这台电脑；Codex 的登录信息不由本应用保存。"
+                ? "手机 Direct 令牌独立保存在本机 Android Keystore；取消授权会保留 Bridge 令牌、账户历史和 Widget 绑定。"
                 : "密钥仅发送给 api.deepseek.com。勾选“记住密钥”后，密钥只保存在本机应用私有存储中。");
+    }
+
+    private boolean isDirectOnlyAccount() {
+        return isEditing() && CodexProvider.ID.equals(account.getProviderId())
+                && account.getAuthType() == AuthType.OAUTH;
     }
 
     private void styleProviderChip(TextView chip, boolean selected) {
@@ -439,12 +478,19 @@ public final class AccountEditActivity extends Activity {
     private void loadAccount() {
         if (!isEditing()) {
             enabledBox.setChecked(true);
+            directEnabledBox.setChecked(false);
+            directEnabledBox.setEnabled(false);
+            directUnlinkButton.setVisibility(View.GONE);
             return;
         }
         providerId = account.getProviderId();
         nameInput.setText(account.getDisplayName());
         nameInput.setSelection(nameInput.getText().length());
         enabledBox.setChecked(account.isEnabled());
+        boolean hasDirect = accountManager.hasDirectCredential(account);
+        directEnabledBox.setChecked(account.isDirectEnabled());
+        directEnabledBox.setEnabled(hasDirect);
+        updateDirectSummary();
 
         try {
             AuthContext saved = accountManager.openCredential(account);
@@ -487,7 +533,9 @@ public final class AccountEditActivity extends Activity {
                     UiKit.COLOR_PEAK);
         }
         if (account.getCredentialId() == null || account.getCredentialId().isEmpty()) {
-            addWarning(CodexProvider.ID.equals(providerId)
+            addWarning(isDirectOnlyAccount()
+                    ? "此账户尚未保存手机 OAuth 授权，可通过上方按钮重新授权。"
+                    : CodexProvider.ID.equals(providerId)
                     ? (!TextUtils.isEmpty(account.getBridgeId())
                             ? "配对账户缺少设备令牌，请从账户列表重新配对。"
                             : "此账户尚未保存 Bridge 地址，刷新时会提示没有填写电脑端 Bridge 地址。")
@@ -523,11 +571,12 @@ public final class AccountEditActivity extends Activity {
         boolean remember = rememberKey.isChecked();
         boolean enabled = enabledBox.isChecked();
         boolean codex = CodexProvider.ID.equals(providerId);
-        String bridgeUrl = codex ? bridgeUrlInput.getText().toString().trim() : "";
-        String bridgeToken = codex ? bridgeTokenInput.getText().toString().trim() : "";
+        boolean directOnly = isDirectOnlyAccount();
+        String bridgeUrl = codex && !directOnly ? bridgeUrlInput.getText().toString().trim() : "";
+        String bridgeToken = codex && !directOnly ? bridgeTokenInput.getText().toString().trim() : "";
         String bridgeCredentialPayload = "";
 
-        if (codex) {
+        if (codex && !directOnly) {
             // Checked before anything is written, so a typo is reported while the
             // user is still looking at the field. No request is made here: probing
             // the host the user just typed would connect somewhere before anything
@@ -576,14 +625,19 @@ public final class AccountEditActivity extends Activity {
                     accountManager.setEnabled(accountId, enabled);
                 }
                 if (codex) {
-                    accountManager.replaceCredential(accountId,
-                            bridgeCredentialPayload);
+                    if (!directOnly) {
+                        accountManager.replaceCredential(accountId, bridgeCredentialPayload);
+                    }
                 } else if (remember && !key.isEmpty()) {
                     accountManager.replaceCredential(accountId, CredentialPayload.forApiKey(key));
                 } else if (!remember) {
                     // Unticking "remember" is how a user forgets a key without
                     // deleting the account. §14.
                     accountManager.clearCredential(accountId);
+                }
+                if (codex && accountManager.hasDirectCredential(accountManager.find(accountId))
+                        && directEnabledBox.isChecked() != account.isDirectEnabled()) {
+                    accountManager.setDirectEnabled(accountId, directEnabledBox.isChecked());
                 }
             }
         } catch (AuthException exception) {
@@ -594,6 +648,7 @@ public final class AccountEditActivity extends Activity {
         // A key change or an enable/disable changes what every widget bound to
         // this account should show.
         new WidgetUpdateManager(this).updateAllWidgets();
+        WidgetRefreshScheduler.schedule(this);
         Toast.makeText(this, isEditing() ? "已保存修改" : "已添加账户", Toast.LENGTH_SHORT).show();
         finish();
     }
@@ -628,6 +683,58 @@ public final class AccountEditActivity extends Activity {
         startActivityForResult(pairing, REQUEST_PAIR);
     }
 
+    private void updateDirectSummary() {
+        if (account == null || !accountManager.hasDirectCredential(account)) {
+            directSummary.setText("尚未授权");
+            directEnabledBox.setChecked(false);
+            directEnabledBox.setEnabled(false);
+            directUnlinkButton.setVisibility(View.GONE);
+            return;
+        }
+        directEnabledBox.setChecked(account.isDirectEnabled());
+        directEnabledBox.setEnabled(true);
+        directUnlinkButton.setVisibility(View.VISIBLE);
+        String email = "";
+        String workspace = "";
+        try {
+            AuthContext direct = accountManager.openDirectOAuthCredential(account);
+            email = direct.get(AuthContext.KEY_OAUTH_EMAIL);
+            workspace = direct.get(AuthContext.KEY_OAUTH_WORKSPACE);
+        } catch (AuthException ignored) { }
+        String state = account.isDirectNeedsAuth() ? "需要重新授权"
+                : account.isDirectEnabled() ? "已授权并启用" : "已授权但已关闭";
+        directSummary.setText(state + (email.isEmpty() ? "" : " · " + email)
+                + (workspace.isEmpty() ? "" : "\n工作区标识：" + workspace));
+    }
+
+    private void openDirectAuth() {
+        Intent intent = new Intent(this, CodexDeviceAuthActivity.class);
+        if (isEditing()) {
+            intent.putExtra(CodexDeviceAuthActivity.EXTRA_ACCOUNT_ID, account.getId());
+        } else {
+            intent.putExtra(CodexDeviceAuthActivity.EXTRA_ACCOUNT_NAME,
+                    nameInput.getText().toString().trim());
+        }
+        startActivityForResult(intent, REQUEST_DIRECT);
+    }
+
+    private void confirmUnlinkDirect() {
+        if (!isEditing() || !accountManager.hasDirectCredential(account)) return;
+        new AlertDialog.Builder(this)
+                .setTitle("解除手机授权")
+                .setMessage("只删除手机上的 OAuth 凭据。Bridge 凭据、账户历史和 Widget 绑定会保留。")
+                .setPositiveButton("解除", (dialog, which) -> {
+                    accountManager.clearDirectOAuthCredential(account.getId());
+                    account = accountManager.find(account.getId());
+                    updateDirectSummary();
+                    new WidgetUpdateManager(this).updateAllWidgets();
+                    WidgetRefreshScheduler.schedule(this);
+                    Toast.makeText(this, "已解除手机授权", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
     /**
      * A pairing that worked has already written its account, so this form has nothing
      * left to save: it closes, and the list reloads what the pairing created. Staying
@@ -637,6 +744,22 @@ public final class AccountEditActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_DIRECT) {
+            if (resultCode != RESULT_OK || data == null) return;
+            String accountId = data.getStringExtra(CodexDeviceAuthActivity.EXTRA_ACCOUNT_ID);
+            if (TextUtils.isEmpty(accountId)) return;
+            new WidgetUpdateManager(this).updateAllWidgets();
+            WidgetRefreshScheduler.schedule(this);
+            if (!isEditing()) {
+                Toast.makeText(this, "已创建手机直连账户", Toast.LENGTH_SHORT).show();
+                finish();
+                return;
+            }
+            account = accountManager.find(accountId);
+            updateDirectSummary();
+            Toast.makeText(this, "手机 Direct 授权已保存", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (requestCode != REQUEST_PAIR || resultCode != RESULT_OK || data == null) {
             return;
         }

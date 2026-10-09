@@ -51,6 +51,12 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name="com.aiusage.monitor.ui.account.CodexDeviceAuthActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:label="Codex 手机授权" />
         <!--
             Phase 7: the pairing screen. Exported because the second channel is a
             link the system delivers - the computer's terminal prints

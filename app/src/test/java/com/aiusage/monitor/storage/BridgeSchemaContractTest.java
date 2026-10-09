@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 /**
- * The shape of schema version 4, and the decisions baked into it. Phase 7 step 5.
+ * The shape of schema version 5, and the decisions baked into it. Phase 8.
  *
  * <p>{@code Database} extends {@code SQLiteOpenHelper}, so a host JVM can read its
  * constants but cannot open a database — which is also why the migration itself is
@@ -63,11 +63,11 @@ public class BridgeSchemaContractTest {
     // ------------------------------------------------------- the schema pins
 
     @Test
-    public void versionFourKeepsTheBridgeMigrationAndAddsPinnedAccounts() throws IOException {
+    public void versionFiveKeepsBridgeAndPinnedMigrationsAndAddsDirectAccounts() throws IOException {
         String source = readDatabaseSource();
 
         assertTrue("the helper version has to move or onUpgrade never runs",
-                source.contains("private static final int VERSION = 4;"));
+                source.contains("private static final int VERSION = 5;"));
         assertTrue("onCreate must build the table from the shared DDL",
                 source.contains("db.execSQL(createBridgesTable(false));"));
         assertTrue("and so must the migration",
@@ -81,6 +81,8 @@ public class BridgeSchemaContractTest {
                 source.contains("+ \"pinned INTEGER NOT NULL DEFAULT 0,\""));
         assertTrue("version 3 accounts need the default-unpinned migration",
                 source.contains("if (oldVersion < 4) {\n            migratePinnedAccounts(db);\n        }"));
+        assertTrue("version 4 accounts need the default-disabled Direct migration",
+                source.contains("if (oldVersion < 5) {\n            migrateDirectCodexAccounts(db);\n        }"));
 
         int start = source.indexOf("private static void migratePinnedAccounts(SQLiteDatabase db) {");
         int end = source.indexOf("\n    }", start);
@@ -91,6 +93,21 @@ public class BridgeSchemaContractTest {
                         && migration.contains("db.beginTransaction()")
                         && migration.contains("db.setTransactionSuccessful()")
                         && migration.contains("db.endTransaction()"));
+
+        int directStart = source.indexOf(
+                "private static void migrateDirectCodexAccounts(SQLiteDatabase db) {");
+        int directEnd = source.indexOf("\n    }", directStart);
+        assertTrue("migrateDirectCodexAccounts must exist", directStart > 0);
+        String directMigration = source.substring(directStart, directEnd);
+        for (String column : new String[]{"direct_credential_id", "direct_identity_hash",
+                "direct_enabled", "direct_needs_auth"}) {
+            assertTrue("missing Direct migration column: " + column,
+                    directMigration.contains(column));
+        }
+        assertTrue("the Direct migration is transactional",
+                directMigration.contains("db.beginTransaction()")
+                        && directMigration.contains("db.setTransactionSuccessful()")
+                        && directMigration.contains("db.endTransaction()"));
     }
 
     @Test

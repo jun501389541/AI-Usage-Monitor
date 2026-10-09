@@ -35,6 +35,7 @@ public final class CodexProvider implements UsageProvider {
 
     private static final ProviderCapabilities CAPABILITIES = ProviderCapabilities.builder()
             .supports(AuthType.BRIDGE_TOKEN)
+            .supports(AuthType.OAUTH)
             .reportsBalance(false)
             .reportsQuotaWindows(true)
             // The Bridge's own payload carries plan and credit fields that are not
@@ -49,14 +50,20 @@ public final class CodexProvider implements UsageProvider {
             .build();
 
     private final BridgeCodexDataSource dataSource;
+    private final CodexDirectDataSource directDataSource;
 
     public CodexProvider() {
-        this(new HttpBridgeTransport());
+        this(new HttpBridgeTransport(), new HttpBridgeTransport());
     }
 
     /** Test seam: a fake transport lets the whole provider run on a plain JVM. */
     public CodexProvider(BridgeTransport transport) {
-        this.dataSource = new BridgeCodexDataSource(transport);
+        this(transport, transport);
+    }
+
+    public CodexProvider(BridgeTransport bridgeTransport, BridgeTransport directTransport) {
+        this.dataSource = new BridgeCodexDataSource(bridgeTransport);
+        this.directDataSource = new CodexDirectDataSource(directTransport);
     }
 
     @Override
@@ -71,7 +78,7 @@ public final class CodexProvider implements UsageProvider {
 
     @Override
     public List<AuthType> getSupportedAuthTypes() {
-        return Arrays.asList(AuthType.BRIDGE_TOKEN);
+        return Arrays.asList(AuthType.BRIDGE_TOKEN, AuthType.OAUTH);
     }
 
     @Override
@@ -81,6 +88,12 @@ public final class CodexProvider implements UsageProvider {
 
     @Override
     public UsageResult fetchUsage(Account account, AuthContext authContext) throws UsageException {
+        if (authContext.getAuthType() == AuthType.OAUTH) {
+            return directDataSource.fetch(
+                    authContext.get(AuthContext.KEY_ACCESS_TOKEN),
+                    authContext.get(AuthContext.KEY_OAUTH_ACCOUNT_ID),
+                    System.currentTimeMillis());
+        }
         if (authContext.getAuthType() != AuthType.BRIDGE_TOKEN) {
             throw new UsageException(UsageError.UNSUPPORTED,
                     "Codex 账户目前只支持通过电脑端 Bridge 读取");

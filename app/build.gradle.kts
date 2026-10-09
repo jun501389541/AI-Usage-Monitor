@@ -20,6 +20,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Keep debug installs alongside an existing release or locally signed build.
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = false
         }
@@ -51,6 +55,7 @@ dependencies {
     // Embedded QR scanning works offline and does not require another scanner app.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.2.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     testImplementation(libs.junit)
     testImplementation(libs.org.json)

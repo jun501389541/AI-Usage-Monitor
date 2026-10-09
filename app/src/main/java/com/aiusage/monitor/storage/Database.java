@@ -29,7 +29,7 @@ public final class Database extends SQLiteOpenHelper {
      * it put a Bridge's URL inside the credential payload (docs/PHASE-6-PLAN.md A3).
      * Version 4 adds account pinning while preserving the existing sort order.
      */
-    private static final int VERSION = 4;
+    private static final int VERSION = 5;
 
     static final String TABLE_ACCOUNTS = "accounts";
     static final String TABLE_CREDENTIALS = "credentials";
@@ -88,6 +88,10 @@ public final class Database extends SQLiteOpenHelper {
                 + "auth_type TEXT NOT NULL,"
                 + "credential_id TEXT NOT NULL DEFAULT '',"
                 + "bridge_id TEXT NOT NULL DEFAULT '',"
+                + "direct_credential_id TEXT NOT NULL DEFAULT '',"
+                + "direct_identity_hash TEXT NOT NULL DEFAULT '',"
+                + "direct_enabled INTEGER NOT NULL DEFAULT 0,"
+                + "direct_needs_auth INTEGER NOT NULL DEFAULT 0,"
                 + "enabled INTEGER NOT NULL DEFAULT 1,"
                 + "pinned INTEGER NOT NULL DEFAULT 0,"
                 + "sort_order INTEGER NOT NULL DEFAULT 0,"
@@ -159,6 +163,9 @@ public final class Database extends SQLiteOpenHelper {
         if (oldVersion < 4) {
             migratePinnedAccounts(db);
         }
+        if (oldVersion < 5) {
+            migrateDirectCodexAccounts(db);
+        }
         // The upstream app's own data is imported by LegacyMigration rather than
         // here; this method only carries the new schema forward.
     }
@@ -169,6 +176,24 @@ public final class Database extends SQLiteOpenHelper {
         try {
             db.execSQL("ALTER TABLE " + TABLE_ACCOUNTS
                     + " ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** Version 4 to 5: an optional, independent phone OAuth source per account. */
+    private static void migrateDirectCodexAccounts(SQLiteDatabase db) {
+        db.beginTransaction();
+        try {
+            db.execSQL("ALTER TABLE " + TABLE_ACCOUNTS
+                    + " ADD COLUMN direct_credential_id TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE " + TABLE_ACCOUNTS
+                    + " ADD COLUMN direct_identity_hash TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE " + TABLE_ACCOUNTS
+                    + " ADD COLUMN direct_enabled INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE " + TABLE_ACCOUNTS
+                    + " ADD COLUMN direct_needs_auth INTEGER NOT NULL DEFAULT 0");
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();

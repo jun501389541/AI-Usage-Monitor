@@ -87,6 +87,19 @@ public class BridgeAttachmentTest {
         assertTrue("and the row is still there", manager.find(account.getId()) != null);
     }
 
+    @Test
+    public void changingTheBridgeFallbackForAnOptedInDirectAccountInvalidatesItsRefresh()
+            throws AuthException {
+        Account account = newCodexAccount("Pixel");
+        manager.saveDirectOAuthCredential(account.getId(), "oauth-payload", "profile-hash");
+        long generation = manager.credentialGeneration(account.getId());
+
+        manager.attachBridge(account.getId(), "br_fallback");
+
+        assertNotEquals("a Direct account's fallback route is part of its refresh state",
+                generation, manager.credentialGeneration(account.getId()));
+    }
+
     /**
      * Every account created before this column meant anything reads as unattached,
      * and readers must treat that as "ask the credential payload", not as an error.

@@ -28,7 +28,7 @@ public final class AppSettings {
     public static final String KEY_BACKGROUND_REFRESH_INTERVAL = "widget_refresh_interval_ms";
 
     /** The interval used when the user has never chosen one. */
-    public static final long DEFAULT_BACKGROUND_REFRESH_INTERVAL_MS = 1800000L;
+    public static final long DEFAULT_BACKGROUND_REFRESH_INTERVAL_MS = 900000L;
 
     private final Database database;
 

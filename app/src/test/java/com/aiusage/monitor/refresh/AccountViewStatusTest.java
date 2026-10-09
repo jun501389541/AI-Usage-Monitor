@@ -37,6 +37,10 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The account list must keep the last good balance and the newest attempt's
@@ -144,6 +148,58 @@ public class AccountViewStatusTest {
 
         assertTrue(outcome.isSuccess());
         assertTrue(called.get());
+    }
+
+    @Test
+    public void interruptingAWaiterDoesNotRemoveTheSharedInFlightRequest() throws Exception {
+        provider.setResult(ok(BASE_TIME));
+        CountDownLatch providerEntered = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        provider.blockFetch(providerEntered, releaseProvider);
+        AtomicReference<AccountRefreshManager.RefreshOutcome> firstOutcome = new AtomicReference<>();
+        AtomicReference<AccountRefreshManager.RefreshOutcome> nextOutcome = new AtomicReference<>();
+        Thread first = new Thread(() -> firstOutcome.set(refreshManager.refresh(account)));
+        Thread waiter = new Thread(() -> refreshManager.refresh(account));
+        Thread next = new Thread(() -> nextOutcome.set(refreshManager.refresh(account)));
+
+        try {
+            first.start();
+            assertTrue("the first refresh reached the provider", providerEntered.await(5, TimeUnit.SECONDS));
+
+            waiter.start();
+            awaitWaiting(waiter);
+            waiter.interrupt();
+            waiter.join(5000);
+            assertFalse("the interrupted waiter should return", waiter.isAlive());
+
+            next.start();
+            awaitWaiting(next);
+            assertEquals("a later trigger must still join the original request",
+                    1, provider.fetchCalls());
+        } finally {
+            releaseProvider.countDown();
+            first.join(5000);
+            waiter.join(5000);
+            next.join(5000);
+        }
+
+        assertFalse(first.isAlive());
+        assertFalse(next.isAlive());
+        assertTrue(firstOutcome.get().isSuccess());
+        assertTrue(nextOutcome.get().isSuccess());
+        assertEquals(1, provider.fetchCalls());
+    }
+
+    private static void awaitWaiting(Thread thread) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (thread.getState() != Thread.State.WAITING
+                && thread.getState() != Thread.State.TIMED_WAITING
+                && thread.isAlive() && System.nanoTime() < deadline) {
+            Thread.yield();
+        }
+        assertTrue("refresh caller should be waiting on the shared request",
+                thread.getState() == Thread.State.WAITING
+                        || thread.getState() == Thread.State.TIMED_WAITING);
     }
 
     @Test
@@ -317,6 +373,9 @@ public class AccountViewStatusTest {
         private final String id;
         private UsageResult result;
         private UsageError error;
+        private final AtomicInteger fetchCalls = new AtomicInteger();
+        private volatile CountDownLatch fetchEntered;
+        private volatile CountDownLatch releaseFetch;
 
         SwitchableProvider(String id) {
             this.id = id;
@@ -325,6 +384,18 @@ public class AccountViewStatusTest {
         void reset() {
             result = null;
             error = null;
+            fetchCalls.set(0);
+            fetchEntered = null;
+            releaseFetch = null;
+        }
+
+        void blockFetch(CountDownLatch entered, CountDownLatch release) {
+            fetchEntered = entered;
+            releaseFetch = release;
+        }
+
+        int fetchCalls() {
+            return fetchCalls.get();
         }
 
         void setResult(UsageResult next) {
@@ -360,6 +431,20 @@ public class AccountViewStatusTest {
         @Override
         public UsageResult fetchUsage(Account account, AuthContext authContext)
                 throws UsageException {
+            fetchCalls.incrementAndGet();
+            CountDownLatch entered = fetchEntered;
+            CountDownLatch release = releaseFetch;
+            if (entered != null && release != null) {
+                entered.countDown();
+                try {
+                    if (!release.await(5, TimeUnit.SECONDS)) {
+                        throw new UsageException(UsageError.NETWORK_ERROR, "timed out waiting for test");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new UsageException(UsageError.NETWORK_ERROR, "test provider interrupted");
+                }
+            }
             if (error != null) {
                 throw new UsageException(error, "stubbed failure");
             }

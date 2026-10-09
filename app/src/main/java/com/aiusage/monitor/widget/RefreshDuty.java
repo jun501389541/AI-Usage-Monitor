@@ -19,6 +19,9 @@ enum RefreshDuty {
     /** Query every enabled account, prune what retention judges, then redraw. */
     REFRESH_AND_REDRAW,
 
+    /** Query only opted-in Direct accounts; there are no widgets to redraw. */
+    DIRECT_ONLY,
+
     /** Redraw from the stored rows: no provider call, no pruning. */
     REDRAW_ONLY,
 
@@ -31,9 +34,12 @@ enum RefreshDuty {
      * @param widgetsShown whether any widget instance still exists
      */
     static RefreshDuty forAlarm(boolean midnight, boolean widgetsShown) {
-        if (!widgetsShown) {
-            return NOTHING;
-        }
-        return midnight ? REDRAW_ONLY : REFRESH_AND_REDRAW;
+        return forAlarm(midnight, widgetsShown, false);
+    }
+
+    static RefreshDuty forAlarm(boolean midnight, boolean widgetsShown, boolean directAccountsEnabled) {
+        if (midnight) return widgetsShown ? REDRAW_ONLY : NOTHING;
+        if (widgetsShown) return REFRESH_AND_REDRAW;
+        return directAccountsEnabled ? DIRECT_ONLY : NOTHING;
     }
 }

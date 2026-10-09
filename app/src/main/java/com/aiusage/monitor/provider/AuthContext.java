@@ -29,6 +29,11 @@ public final class AuthContext {
     /** Key name for an OAuth expiry, epoch millis. */
     public static final String KEY_EXPIRES_AT = "expiresAt";
 
+    public static final String KEY_ID_TOKEN = "idToken";
+    public static final String KEY_OAUTH_ACCOUNT_ID = "oauthAccountId";
+    public static final String KEY_OAUTH_EMAIL = "oauthEmail";
+    public static final String KEY_OAUTH_WORKSPACE = "oauthWorkspace";
+
     /** Key name for a bridge device token. */
     public static final String KEY_DEVICE_TOKEN = "deviceToken";
 

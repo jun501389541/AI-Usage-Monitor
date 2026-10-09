@@ -27,7 +27,7 @@ import com.aiusage.monitor.widget.BalanceWidget4x2Provider;
  * debug builds only; it never reaches a release APK and does not touch any
  * production code path.
  *
- * <p>Usage: {@code adb shell am start -n com.aiusage.monitor/.debug.PinWidgetActivity --es size 4x2}
+ * <p>Usage: {@code adb shell am start -n com.aiusage.monitor.debug/com.aiusage.monitor.debug.PinWidgetActivity --es size 4x2}
  * where {@code size} is one of {@code 4x2} (default), {@code 2x2}, {@code 2x1}.
  */
 public final class PinWidgetActivity extends Activity {
@@ -61,7 +61,7 @@ public final class PinWidgetActivity extends Activity {
         Log.i(TAG, "PIN-PROVIDER: " + provider.getClassName() + " requestedSize=" + size);
 
         Intent callback = new Intent(this, PinWidgetActivity.class)
-                .setAction("com.aiusage.monitor.debug.PINNED");
+                .setAction(getPackageName() + ".PINNED");
         PendingIntent success = PendingIntent.getActivity(this, 0, callback,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
@@ -70,13 +70,13 @@ public final class PinWidgetActivity extends Activity {
         finish();
     }
 
-    private static ComponentName providerFor(String size) {
+    private ComponentName providerFor(String size) {
         if ("2x1".equals(size)) {
-            return new ComponentName("com.aiusage.monitor", BalanceWidget2x1Provider.class.getName());
+            return new ComponentName(getPackageName(), BalanceWidget2x1Provider.class.getName());
         }
         if ("2x2".equals(size)) {
-            return new ComponentName("com.aiusage.monitor", BalanceWidget2x2Provider.class.getName());
+            return new ComponentName(getPackageName(), BalanceWidget2x2Provider.class.getName());
         }
-        return new ComponentName("com.aiusage.monitor", BalanceWidget4x2Provider.class.getName());
+        return new ComponentName(getPackageName(), BalanceWidget4x2Provider.class.getName());
     }
 }

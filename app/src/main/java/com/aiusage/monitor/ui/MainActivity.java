@@ -1113,7 +1113,14 @@ public final class MainActivity extends Activity {
             detailsView.setVisibility(View.VISIBLE);
             detailsView.setText(getString(R.string.quota_window_block, quotaLines));
         }
-        autoStatusView.setText(refreshIntervalDescription() + " · 更新于 " + currentTime());
+        String freshness = sourceLabel(result.getSource()) + " · 更新于 "
+                + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(new Date(result.getUpdatedAt()));
+        Account latestAccount = accountManager.find(account.getId());
+        if (latestAccount != null && latestAccount.isDirectNeedsAuth()) {
+            freshness += " · Direct 需重新授权";
+        }
+        autoStatusView.setText(refreshIntervalDescription() + " · " + freshness);
         renderRecentReadings();
 
         // The manager has already stored the snapshot; the widgets only need to
@@ -1268,6 +1275,12 @@ public final class MainActivity extends Activity {
 
     private String currentTime() {
         return new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
+    }
+
+    private static String sourceLabel(UsageResult.Source source) {
+        if (source == UsageResult.Source.DIRECT_API) return "手机 Direct";
+        if (source == UsageResult.Source.BRIDGE) return "电脑 Bridge";
+        return "缓存快照";
     }
 
     private void scheduleSecondTick() {

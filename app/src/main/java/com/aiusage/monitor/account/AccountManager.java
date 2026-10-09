@@ -48,13 +48,13 @@ public final class AccountManager {
     private final Object writeMonitor = new Object();
 
     /**
-     * Per-account credential generation, advanced every time the account's
-     * secret changes. R3.
+     * Per-account refresh generation, advanced when credentials change and when
+     * an enabled Direct account's Bridge fallback route changes. R3.
      *
      * <p>Closes the window the write monitor cannot: a request sent with the
-     * <em>old</em> key can come back after the user saved a new one, and the
-     * account still exists, so an existence check lets the old key's balance
-     * land in the history of an account now standing on a different credential.
+     * <em>old</em> request can come back after the user changed a credential or
+     * an active Direct account's fallback route, and the account still exists,
+     * so an existence check alone could commit a result from the prior state.
      * Comparing the generation captured before the secret was read against the
      * current one at commit time discards precisely that result.
      *
@@ -84,9 +84,9 @@ public final class AccountManager {
     }
 
     /**
-     * The current credential generation of an account: 0 until its secret
-     * changes for the first time. A refresh captures it before opening the
-     * credential and re-checks it, still holding {@link #writeMonitor()},
+     * The current refresh generation of an account: 0 until its secret changes or
+     * its enabled Direct fallback route changes. A refresh captures it before
+     * opening credentials and re-checks it, still holding {@link #writeMonitor()},
      * before committing anything. R3.
      */
     public long credentialGeneration(String accountId) {
@@ -154,6 +154,23 @@ public final class AccountManager {
                 .build();
         accounts.save(account);
         return account;
+    }
+
+    /** Creates a standalone Codex card backed only by the phone's OAuth credential. */
+    public Account createDirectOAuthAccount(String displayName, String payload, String identityHash)
+            throws AuthException {
+        synchronized (writeMonitor) {
+            String credentialId = credentials.create(AuthType.OAUTH, payload);
+            long now = System.currentTimeMillis();
+            Account account = Account.builder().id(newId())
+                    .providerId(com.aiusage.monitor.provider.codex.CodexProvider.ID)
+                    .displayName(displayName).authType(AuthType.OAUTH)
+                    .credentialId(credentialId).directEnabled(true)
+                    .directIdentityHash(identityHash).enabled(true)
+                    .sortOrder(nextSortOrder()).createdAt(now).updatedAt(now).build();
+            accounts.save(account);
+            return account;
+        }
     }
 
     /**
@@ -256,6 +273,116 @@ public final class AccountManager {
         }
     }
 
+    /** Saves a newly authorized Codex source, keeping any Bridge credential intact. */
+    public void saveDirectOAuthCredential(String accountId, String payload, String identityHash)
+            throws AuthException {
+        synchronized (writeMonitor) {
+            Account account = require(accountId);
+            String replacement = credentials.create(AuthType.OAUTH, payload);
+            if (account.getAuthType() == AuthType.OAUTH) {
+                String oldPrimary = account.getCredentialId();
+                accounts.save(account.toBuilder().credentialId(replacement)
+                        .directEnabled(true).directNeedsAuth(false)
+                        .directIdentityHash(identityHash).updatedAt(System.currentTimeMillis()).build());
+                if (oldPrimary != null && !oldPrimary.isEmpty()) credentials.delete(oldPrimary);
+            } else {
+                String oldDirect = account.getDirectCredentialId();
+                accounts.save(account.toBuilder().directCredentialId(replacement)
+                        .directEnabled(true).directNeedsAuth(false)
+                        .directIdentityHash(identityHash).updatedAt(System.currentTimeMillis()).build());
+                if (oldDirect != null && !oldDirect.isEmpty()) credentials.delete(oldDirect);
+            }
+            advanceCredentialGeneration(accountId);
+        }
+    }
+
+    /** Persists rotated OAuth tokens only while the request still owns this generation. */
+    public boolean rotateDirectOAuthCredential(String accountId, long expectedGeneration,
+                                               String payload) throws AuthException {
+        synchronized (writeMonitor) {
+            Account account = accounts.findById(accountId);
+            if (account == null || credentialGeneration(accountId) != expectedGeneration) return false;
+            String id = directCredentialId(account);
+            if (id.isEmpty()) return false;
+            credentials.update(id, payload);
+            accounts.save(account.toBuilder().updatedAt(System.currentTimeMillis()).build());
+            advanceCredentialGeneration(accountId);
+            return true;
+        }
+    }
+
+    public com.aiusage.monitor.provider.AuthContext openDirectOAuthCredential(Account account)
+            throws AuthException {
+        if (account == null) {
+            throw new AuthException(com.aiusage.monitor.model.UsageError.INVALID_CREDENTIAL,
+                    "账户不存在");
+        }
+        return credentials.open(directCredentialId(account), AuthType.OAUTH);
+    }
+
+    /** Enables or disables only the experimental Direct source. */
+    public void setDirectEnabled(String accountId, boolean enabled) {
+        synchronized (writeMonitor) {
+            Account account = require(accountId);
+            if (enabled && directCredentialId(account).isEmpty()) {
+                throw new IllegalStateException("Codex 手机授权尚未完成");
+            }
+            accounts.save(account.toBuilder().directEnabled(enabled)
+                    .updatedAt(System.currentTimeMillis()).build());
+            advanceCredentialGeneration(accountId);
+        }
+    }
+
+    /** Records a reauthorization state without invalidating an in-flight reading. */
+    public void setDirectNeedsAuth(String accountId, boolean needsAuth) {
+        synchronized (writeMonitor) {
+            Account account = accounts.findById(accountId);
+            if (account == null || account.isDirectNeedsAuth() == needsAuth) return;
+            accounts.save(account.toBuilder().directNeedsAuth(needsAuth)
+                    .updatedAt(System.currentTimeMillis()).build());
+        }
+    }
+
+    /** Removes only the Direct token; a Bridge credential and its pairing remain usable. */
+    public void clearDirectOAuthCredential(String accountId) {
+        synchronized (writeMonitor) {
+            Account account = require(accountId);
+            if (account.getAuthType() == AuthType.OAUTH) {
+                if (!account.getCredentialId().isEmpty()) credentials.delete(account.getCredentialId());
+                accounts.save(account.toBuilder().credentialId("").directEnabled(false)
+                        .directNeedsAuth(false).directIdentityHash("")
+                        .updatedAt(System.currentTimeMillis()).build());
+            } else {
+                String id = account.getDirectCredentialId();
+                if (id != null && !id.isEmpty()) credentials.delete(id);
+                accounts.save(account.toBuilder().directCredentialId("").directEnabled(false)
+                        .directNeedsAuth(false).directIdentityHash("")
+                        .updatedAt(System.currentTimeMillis()).build());
+            }
+            advanceCredentialGeneration(accountId);
+        }
+    }
+
+    public boolean hasDirectCredential(Account account) {
+        return account != null && !directCredentialId(account).isEmpty();
+    }
+
+    /** Enabled, opted-in accounts for the no-widget background alarm. */
+    public List<Account> listDirectRefreshEnabled() {
+        List<Account> result = new ArrayList<>();
+        for (Account account : accounts.findEnabled()) {
+            if (account.isDirectEnabled() && !directCredentialId(account).isEmpty()) result.add(account);
+        }
+        return result;
+    }
+
+    private static String directCredentialId(Account account) {
+        if (account == null) return "";
+        String secondary = account.getDirectCredentialId();
+        if (secondary != null && !secondary.isEmpty()) return secondary;
+        return account.getAuthType() == AuthType.OAUTH ? account.getCredentialId() : "";
+    }
+
     /** Renames an account. The id does not change. */
     public void rename(String accountId, String displayName) {
         synchronized (writeMonitor) {
@@ -281,11 +408,10 @@ public final class AccountManager {
     /**
      * Points an account at a paired Bridge. Phase 7 step 5; Spec §21.
      *
-     * <p>Deliberately not a credential change: the generation counter tracks the
-     * secret, and attaching a Bridge rewrites the {@code bridge_id} column and
-     * nothing else. A refresh in flight keeps its meaning — it was produced by the
-     * key that is still stored — so dropping it would throw away a good reading for
-     * a bookkeeping edit.
+     * <p>For a Bridge-only account this remains a routing edit, not a credential
+     * change, and an in-flight read keeps its meaning. When Direct is enabled,
+     * however, this Bridge is the fallback source; changing it advances the refresh
+     * generation so an older fallback result cannot be stored after relinking.
      *
      * <p>Passing the empty string detaches, which returns the account to the
      * hand-typed path it was on before pairing: readers must treat "no bridge_id"
@@ -295,10 +421,14 @@ public final class AccountManager {
     public void attachBridge(String accountId, String bridgeId) {
         synchronized (writeMonitor) {
             Account account = require(accountId);
+            String nextBridgeId = bridgeId == null ? "" : bridgeId;
+            boolean directFallbackChanged = account.isDirectEnabled()
+                    && !account.getBridgeId().equals(nextBridgeId);
             accounts.save(account.toBuilder()
-                    .bridgeId(bridgeId == null ? "" : bridgeId)
+                    .bridgeId(nextBridgeId)
                     .updatedAt(System.currentTimeMillis())
                     .build());
+            if (directFallbackChanged) advanceCredentialGeneration(accountId);
         }
     }
 
@@ -329,6 +459,11 @@ public final class AccountManager {
             }
             if (account.getCredentialId() != null && !account.getCredentialId().isEmpty()) {
                 credentials.delete(account.getCredentialId());
+            }
+            if (account.getDirectCredentialId() != null
+                    && !account.getDirectCredentialId().isEmpty()
+                    && !account.getDirectCredentialId().equals(account.getCredentialId())) {
+                credentials.delete(account.getDirectCredentialId());
             }
             if (historyCleaner != null) {
                 historyCleaner.deleteHistory(accountId);

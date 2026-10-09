@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 
+import com.aiusage.monitor.AppGraph;
 import com.aiusage.monitor.storage.AppSettings;
 
 import java.util.Calendar;
@@ -75,7 +76,10 @@ public final class WidgetRefreshScheduler {
     }
 
     public static void schedule(Context context) {
-        if (!WidgetUpdateManager.hasWidgets(context)) {
+        boolean hasWidgets = WidgetUpdateManager.hasWidgets(context);
+        boolean hasDirect = AppGraph.get(context).refreshManager().hasDirectRefreshAccounts();
+        if (!hasWidgets && !hasDirect) {
+            cancel(context);
             return;
         }
         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);

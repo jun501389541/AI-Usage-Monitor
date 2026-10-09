@@ -12,20 +12,20 @@ MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）、Phase 7（手机与
 三种引入通道、SPKI 指纹钉定与逐连接主机名校验、`bridges` 表、配对与设备界面）**。应用名
 `AI Usage Monitor`，包名 / applicationId `com.aiusage.monitor`
 （`versionCode 58` / `versionName 4.1.0`）。手机现已接入二维码配对。
-局域网自动发现、Direct OAuth、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸尚未开始。
+局域网自动发现、AUTO、`UsageSnapshot` 图表、2×4 / 4×4 尺寸尚未开始。Codex 手机 Direct OAuth 已进入个人设备实验阶段；额度接口仍属未承诺稳定的内部接口，尚待真实手机验收。
 
 ## 当前功能
 
-- **账户列表（启动页）**：管理多个 AI 服务商账户，每张卡片独立显示用量与状态；支持刷新全部账户
+- **账户列表（启动页）**：管理多个 AI 服务商账户，每张卡片独立显示用量与状态；在页面顶部下拉或点击「刷新全部账户」更新所有已启用账户。刷新与横滑、长按排序协调，完成时保留拖动顺序
 - **添加 / 重命名 / 启用停用 / 排序 / 删除账户**，每个账户单独保存一组凭据。
   左滑显示删除（需确认），右滑显示置顶或取消置顶；长按可在置顶组或普通组内拖动排序。
   重命名、启停及重新配对保留在右侧更多菜单。
 - **账户详情页**：DeepSeek 账户在此输入并记住 API Key，点「查询余额」；Codex 账户
-  没有可打的字段；配对账户从本机保存的 Bridge 记录读取地址、加密凭据只存设备令牌，
+  可继续由配对 Bridge 读取，也可手动选择实验性手机 Direct；Bridge 配对账户从本机保存的 Bridge 记录读取地址、加密凭据只存设备令牌，
   手动调试账户则把地址和令牌一起加密保存。详情页显示正在调用的 Bridge 地址，可点「查询额度」；自动查询按该账户的间隔设置发起
 - 进入详情页时立即查询一次（选择「仅手动刷新」时除外）
 - 前台间隔按服务商分别保存：DeepSeek 默认 15 秒，Bridge 最短 5 分钟；两者都可设为仅手动
-- 退到后台后停止详情页自动查询；有 Widget 时按至少 15 分钟（默认 30 分钟）安排后台刷新
+- 退到后台后停止详情页自动查询；默认每 15 分钟安排非精确后台刷新：有 Widget 时刷新启用账户；没有 Widget 时只刷新已启用 Direct 的账户
 - 提供 4×2、2×2、2×1 三种桌面小组件，**每个 Widget 绑定一组账户 Slot**：
   4×2 是最多三个账户的 Dashboard（可同平台多账户，也可多平台混排），2×2 / 2×1 为单账户
 - 每个 Slot 显示账户名、余额与今日用量、**最后读取时间**与**最新刷新状态**（过期/认证失败/网络失败均明示，且保留上次成功的余额）
@@ -33,9 +33,10 @@ MVP）、Phase 6（手机经 Bridge 读取 Codex 额度）、Phase 7（手机与
 - 未绑定账户的 Widget 回退到第一个启用账户，升级后不会显示空白；绑定的账户被删除时该 Slot 明确显示「账户已删除」
 - **历史读数**：每次成功与失败都落 `usage_snapshots`；账户详情页显示「最近读数」（时间、余额、与上次的差值、失败标记）
 - **保留策略**：明细快照保留 14 天，日粒度事实由 `daily_usage` 长期保留；清理永不删除某账户的「最后一次成功读数」与「最新一行」，因此不会把 Widget 清成空白
-- **OpenAI Codex 账户**：账户可选 DeepSeek 或 Codex。Codex 数据由电脑端额度桥提供；列表显示每周剩余额度，详情页显示额度条、剩余重置时间及具体时间点。支持展示重置卡次数、类型及到期日期，并区分未返回与格式无效；此功能只读取状态，不兑换卡片。
+- **OpenAI Codex 账户**：账户可选 DeepSeek 或 Codex。默认使用电脑端额度 Bridge；用户可另行授权手机 Direct，Direct 成功优先，失败时回退完整 Bridge 快照。卡片显示实际来源与更新时间；内部额度接口返回哪些窗口就显示哪些，不预设五小时或每周窗口。支持展示重置卡次数、类型及到期日期；此功能只读取状态，不兑换卡片。
 - **通知设置**：DeepSeek 按工作日峰谷时段切换提醒；Codex 按 5 小时和每周额度的预计重置时间提醒，并可为每个 Codex 账户单独开关。
 - **失败态按来源分开**：Bridge 未连接、电脑端授权已失效、当前 Codex 不支持此查询是三句话三种状态，不会互相冒充（Codex 账户不会被告知「API Key 无效」，它没有 API Key）。
+- **实验性 Codex 手机 Direct**：通过 OpenAI 官方设备码页面授权，令牌独立加密保存于 Android Keystore；不读取 ChatGPT App 凭据。关联现有 Bridge 卡片前显示手机账号资料和 Bridge 名称，并标记「用户关联，身份未验证」。
 - 一键进入 `https://platform.deepseek.com/`
 - 可选“记住密钥”，仅保存在应用私有存储中
 - 黑 / 灰配色；扫码使用 ZXing，账户拖动列表使用 AndroidX RecyclerView
@@ -65,7 +66,7 @@ Account → ProviderRegistry → CredentialStore → AuthAdapter → Provider
 - 持久化使用 SQLite（`SQLiteOpenHelper`），表为 `accounts` / `credentials` /
   `usage_snapshots` / `widget_config` / `daily_usage` / `app_meta`。
 - 凭据使用 Android Keystore（AES-GCM）加密，`credentials.protection` 列记录
-  `keystore-aes-gcm` 或降级标记 `degraded-local`。
+  `keystore-aes-gcm` 或降级标记 `degraded-local`；OAuth 严格拒绝降级存储。
 - 刷新失败只**追加**一条失败快照，永不删除历史；`latest()` 过滤 `success = 1`，
   因此一次网络故障不会清空最后一次成功读数（Spec §39 rule 18）。
 
@@ -164,6 +165,8 @@ v3→v4 增加账户置顶状态，现有账户保持原顺序并迁移为未置
 ```
 
 产物：`app\build\outputs\apk\debug\app-debug.apk`
+
+Debug 变体使用独立包名 `com.aiusage.monitor.debug`，可与已安装的正式版并行运行；release 包名不变。
 
 最新全局审查与验证见 [2026-10-09 审查记录](docs/REVIEW-2026-10-09.md)。
 `assembleRelease` 当前生成未签名 APK；正式发布前需递增版本号并配置固定发布签名。

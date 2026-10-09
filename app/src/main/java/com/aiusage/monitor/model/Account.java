@@ -21,6 +21,10 @@ public final class Account {
     private final AuthType authType;
     private final String credentialId;
     private final String bridgeId;
+    private final String directCredentialId;
+    private final String directIdentityHash;
+    private final boolean directEnabled;
+    private final boolean directNeedsAuth;
     private final boolean enabled;
     private final boolean pinned;
     private final int sortOrder;
@@ -34,6 +38,10 @@ public final class Account {
         this.authType = builder.authType;
         this.credentialId = builder.credentialId;
         this.bridgeId = builder.bridgeId;
+        this.directCredentialId = builder.directCredentialId;
+        this.directIdentityHash = builder.directIdentityHash;
+        this.directEnabled = builder.directEnabled;
+        this.directNeedsAuth = builder.directNeedsAuth;
         this.enabled = builder.enabled;
         this.pinned = builder.pinned;
         this.sortOrder = builder.sortOrder;
@@ -70,6 +78,16 @@ public final class Account {
         return bridgeId;
     }
 
+    /** Additional encrypted OAuth credential used by the experimental phone path. */
+    public String getDirectCredentialId() { return directCredentialId; }
+
+    /** One-way profile fingerprint used to require confirmation after account changes. */
+    public String getDirectIdentityHash() { return directIdentityHash; }
+
+    public boolean isDirectEnabled() { return directEnabled; }
+
+    public boolean isDirectNeedsAuth() { return directNeedsAuth; }
+
     /** Disabled accounts keep their history but are not refreshed. */
     public boolean isEnabled() {
         return enabled;
@@ -99,6 +117,10 @@ public final class Account {
                 .authType(authType)
                 .credentialId(credentialId)
                 .bridgeId(bridgeId)
+                .directCredentialId(directCredentialId)
+                .directIdentityHash(directIdentityHash)
+                .directEnabled(directEnabled)
+                .directNeedsAuth(directNeedsAuth)
                 .enabled(enabled)
                 .pinned(pinned)
                 .sortOrder(sortOrder)
@@ -123,6 +145,10 @@ public final class Account {
         private AuthType authType = AuthType.API_KEY;
         private String credentialId = "";
         private String bridgeId = "";
+        private String directCredentialId = "";
+        private String directIdentityHash = "";
+        private boolean directEnabled;
+        private boolean directNeedsAuth;
         private boolean enabled = true;
         private boolean pinned;
         private int sortOrder;
@@ -156,6 +182,26 @@ public final class Account {
 
         public Builder bridgeId(String value) {
             this.bridgeId = value == null ? "" : value;
+            return this;
+        }
+
+        public Builder directCredentialId(String value) {
+            this.directCredentialId = value == null ? "" : value;
+            return this;
+        }
+
+        public Builder directIdentityHash(String value) {
+            this.directIdentityHash = value == null ? "" : value;
+            return this;
+        }
+
+        public Builder directEnabled(boolean value) {
+            this.directEnabled = value;
+            return this;
+        }
+
+        public Builder directNeedsAuth(boolean value) {
+            this.directNeedsAuth = value;
             return this;
         }
 

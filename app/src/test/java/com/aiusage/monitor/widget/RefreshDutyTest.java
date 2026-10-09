@@ -56,6 +56,12 @@ public class RefreshDutyTest {
     }
 
     @Test
+    public void theIntervalRefreshKeepsRunningForOptedInDirectAccountsWithoutWidgets() {
+        assertEquals(RefreshDuty.DIRECT_ONLY, RefreshDuty.forAlarm(false, false, true));
+        assertEquals(RefreshDuty.NOTHING, RefreshDuty.forAlarm(true, false, true));
+    }
+
+    @Test
     public void theReceiverAsksTheDutyInsteadOfOringTheTwoTriggers() throws IOException {
         String source = read("widget/WidgetRefreshReceiver.java", "class WidgetRefreshReceiver");
 
