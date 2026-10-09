@@ -6,6 +6,7 @@ import com.aiusage.monitor.account.AccountManager;
 import com.aiusage.monitor.account.AccountRepository;
 import com.aiusage.monitor.auth.CredentialStore;
 import com.aiusage.monitor.bridge.BridgeRepository;
+import com.aiusage.monitor.notification.NotificationScheduler;
 import com.aiusage.monitor.provider.ProviderRegistry;
 import com.aiusage.monitor.refresh.AccountRefreshManager;
 import com.aiusage.monitor.storage.AppSettings;
@@ -79,6 +80,8 @@ public final class AppGraph {
         // refreshManager for that reason.
         this.refreshManager = new AccountRefreshManager(
                 accountManager, usageRepository, registry, bridgeRepository);
+        this.refreshManager.setRefreshSuccessListener(accountId ->
+                NotificationScheduler.reconcile(appContext));
         this.widgetConfigStore = new SqliteWidgetConfigStore(appContext);
         this.settings = new AppSettings(appContext);
         this.legacyMigration = new LegacyMigration(appContext, accountManager, Database.get(appContext));

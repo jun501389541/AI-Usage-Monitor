@@ -129,6 +129,24 @@ public class AccountViewStatusTest {
     }
 
     @Test
+    public void successfulRefreshListenerRunsAfterCommittedResultAndOutsideWriteLock() {
+        provider.setResult(ok(BASE_TIME));
+        java.util.concurrent.atomic.AtomicBoolean called = new java.util.concurrent.atomic.AtomicBoolean();
+        refreshManager.setRefreshSuccessListener(accountId -> {
+            assertEquals(account.getId(), accountId);
+            assertNotNull("scheduler must read the committed successful snapshot", usage.latest(accountId));
+            assertFalse("auxiliary scheduling must not hold the account write monitor",
+                    Thread.holdsLock(accountManager.writeMonitor()));
+            called.set(true);
+        });
+
+        AccountRefreshManager.RefreshOutcome outcome = refreshManager.refresh(account);
+
+        assertTrue(outcome.isSuccess());
+        assertTrue(called.get());
+    }
+
+    @Test
     public void successThenNetworkFailureKeepsBalanceAndReportsNetwork() {
         provider.setResult(ok(BASE_TIME));
         refreshManager.refresh(account);

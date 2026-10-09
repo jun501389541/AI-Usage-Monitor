@@ -50,6 +50,7 @@ public final class AccountRefreshManager {
      * happens to be in its credential.
      */
     private final com.aiusage.monitor.bridge.BridgeRepository bridges;
+    private RefreshSuccessListener refreshSuccessListener;
 
     public AccountRefreshManager(AccountManager accountManager,
                                  UsageRepository usageRepository,
@@ -65,6 +66,15 @@ public final class AccountRefreshManager {
         this.usageRepository = usageRepository;
         this.registry = registry;
         this.bridges = bridges;
+    }
+
+    /** Called after a successful result has been committed and the write lock is released. */
+    public void setRefreshSuccessListener(RefreshSuccessListener listener) {
+        this.refreshSuccessListener = listener;
+    }
+
+    public interface RefreshSuccessListener {
+        void onRefreshSuccess(String accountId);
     }
 
     /** The outcome of one refresh attempt. */
@@ -303,6 +313,7 @@ public final class AccountRefreshManager {
             // serializing it against the whole delete on one shared monitor.
             // The provider call stays outside the monitor: it is seconds of
             // network I/O and must not block a delete for its duration.
+            UsageResult stamped;
             synchronized (accountManager.writeMonitor()) {
                 // R3: the delete, or a credential change, can land while the
                 // provider call is in flight. The account is re-read from
@@ -316,7 +327,7 @@ public final class AccountRefreshManager {
                 // identity and a timestamp are stamped here so every
                 // stored row is self-describing regardless of what the
                 // provider filled in.
-                UsageResult stamped = result.toBuilder()
+                stamped = result.toBuilder()
                         .accountId(accountId)
                         .providerId(account.getProviderId())
                         .updatedAt(result.getSource() == UsageResult.Source.BRIDGE && result.getUpdatedAt() > 0
@@ -337,8 +348,17 @@ public final class AccountRefreshManager {
                 }
 
                 usageRepository.save(accountId, stamped, true);
-                return RefreshOutcome.ok(accountId, stamped);
             }
+            RefreshSuccessListener listener = refreshSuccessListener;
+            if (listener != null) {
+                try {
+                    listener.onRefreshSuccess(accountId);
+                } catch (RuntimeException ignored) {
+                    // Notification reconciliation is auxiliary and cannot turn
+                    // a saved provider result into a failed refresh.
+                }
+            }
+            return RefreshOutcome.ok(accountId, stamped);
         } catch (UsageException exception) {
             synchronized (accountManager.writeMonitor()) {
                 if (isVoid(accountId, generation)) {

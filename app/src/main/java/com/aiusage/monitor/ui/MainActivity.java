@@ -53,6 +53,7 @@ import com.aiusage.monitor.model.Metric;
 import com.aiusage.monitor.model.QuotaWindow;
 import com.aiusage.monitor.model.UsageResult;
 import com.aiusage.monitor.model.UsageStatus;
+import com.aiusage.monitor.notification.NotificationScheduler;
 import com.aiusage.monitor.util.QuotaWords;
 import com.aiusage.monitor.provider.AuthContext;
 import com.aiusage.monitor.provider.codex.CodexProvider;
@@ -239,7 +240,10 @@ public final class MainActivity extends Activity {
         loadStoredCredential();
         updatePeakCard();
         if (!isBridgeAccount()) {
-            HolidayUpdater.updateIfNeeded(this, changed -> runOnUiThread(this::updatePeakCard));
+            HolidayUpdater.updateIfNeeded(this, changed -> runOnUiThread(() -> {
+                updatePeakCard();
+                NotificationScheduler.reconcile(graph.appContext());
+            }));
         }
     }
 
@@ -422,6 +426,16 @@ public final class MainActivity extends Activity {
 
         queryButton = actionButton(queryLabel(), true);
         credentialCard.addView(queryButton, matchHeight(50, 18));
+
+        TextView notificationSettingsButton = actionButton("通知设置", false);
+        notificationSettingsButton.setContentDescription("通知设置");
+        notificationSettingsButton.setOnClickListener(v -> {
+            Intent intent = new Intent(this, com.aiusage.monitor.ui.notification.NotificationSettingsActivity.class);
+            intent.putExtra(com.aiusage.monitor.ui.notification.NotificationSettingsActivity.EXTRA_ACCOUNT_ID,
+                    account.getId());
+            startActivity(intent);
+        });
+        credentialCard.addView(notificationSettingsButton, matchHeight(46, 10));
 
         autoStatusView = text("进入自动查询 · " + refreshIntervalDescription(), 11, COLOR_HINT, Typeface.NORMAL);
         autoStatusView.setGravity(Gravity.CENTER);
@@ -1309,6 +1323,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updateDisplayTimeZone(TimeZone.getDefault());
+        NotificationScheduler.reconcile(this);
         // The foreground owns refreshing while it is visible; the alarm is
         // re-armed in onPause.
         WidgetRefreshScheduler.cancel(this);

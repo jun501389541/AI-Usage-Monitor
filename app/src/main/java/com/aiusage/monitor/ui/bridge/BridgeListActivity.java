@@ -3,9 +3,15 @@ package com.aiusage.monitor.ui.bridge;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Insets;
+import android.graphics.Color;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -43,14 +49,26 @@ public final class BridgeListActivity extends Activity {
         graph = AppGraph.get(this);
         graph.ensureMigrated();
 
+        configureWindow();
+
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setBackgroundColor(UiKit.COLOR_BG);
 
-        page.addView(UiKit.text(this, "已配对的电脑", 22, UiKit.COLOR_TEXT, Typeface.BOLD),
-                UiKit.matchWrap(this, 0));
-        page.addView(UiKit.text(this, "手机靠证书指纹认电脑，不靠 IP；电脑换网段时改地址就好。",
-                13, UiKit.COLOR_MUTED, Typeface.NORMAL), UiKit.matchWrap(this, 6));
+        TextView kicker = UiKit.text(this, "AI USAGE MONITOR", 11,
+                UiKit.COLOR_MUTED, Typeface.BOLD);
+        kicker.setLetterSpacing(0.18f);
+        page.addView(kicker, UiKit.matchWrap(this, 0));
+
+        TextView title = UiKit.text(this, "已配对的电脑", 31, UiKit.COLOR_TEXT, Typeface.BOLD);
+        title.setIncludeFontPadding(false);
+        page.addView(title, UiKit.matchWrap(this, 8));
+
+        TextView subtitle = UiKit.text(this,
+                "手机靠证书指纹认电脑，不靠 IP；电脑换网段时改地址就好。",
+                14, UiKit.COLOR_MUTED, Typeface.NORMAL);
+        subtitle.setLineSpacing(0f, 1.15f);
+        page.addView(subtitle, UiKit.matchWrap(this, 8));
 
         TextView add = UiKit.actionButton(this, "配对新电脑", true);
         add.setContentDescription("配对新电脑");
@@ -68,12 +86,41 @@ public final class BridgeListActivity extends Activity {
         page.addView(empty, UiKit.matchWrap(this, 8));
 
         ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setScrollbarFadingEnabled(true);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setBackgroundColor(UiKit.COLOR_BG);
         scroll.addView(page, new ScrollView.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
         scroll.setPadding(UiKit.dp(this, 20), UiKit.dp(this, 22), UiKit.dp(this, 20),
                 UiKit.dp(this, 22));
         setContentView(scroll);
+        applyInsets(scroll);
+    }
+
+    private void configureWindow() {
+        Window window = getWindow();
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(UiKit.COLOR_BG);
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.setNavigationBarDividerColor(UiKit.COLOR_BG);
+        }
+    }
+
+    private void applyInsets(View root) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+            root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+                Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
+                view.setPadding(UiKit.dp(this, 20), UiKit.dp(this, 22) + bars.top,
+                        UiKit.dp(this, 20), UiKit.dp(this, 22) + bars.bottom);
+                return windowInsets;
+            });
+            root.requestApplyInsets();
+        }
     }
 
     @Override

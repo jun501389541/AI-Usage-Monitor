@@ -6,7 +6,8 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
     networkSecurityConfig is reported as unused below API 24, and that is a real
@@ -81,6 +82,18 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
             android:label="已配对的电脑" />
+        <activity
+            android:name="com.aiusage.monitor.ui.notification.NotificationSettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:label="通知设置" />
+        <activity
+            android:name="com.aiusage.monitor.ui.notification.NotificationProviderSettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:label="平台提醒" />
         <!--
             Configured by the launcher while a widget is placed, so it must be
             exported and reachable from outside the app. It always returns
@@ -131,6 +144,19 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
-        </receiver>    </application>
+        </receiver>
+        <receiver
+            android:name="com.aiusage.monitor.notification.NotificationAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.aiusage.monitor.notification.DELIVER" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+    </application>
 
 </manifest>

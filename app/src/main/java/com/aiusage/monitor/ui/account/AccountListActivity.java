@@ -30,6 +30,7 @@ import com.aiusage.monitor.model.Balance;
 import com.aiusage.monitor.model.Account;
 import com.aiusage.monitor.model.UsageResult;
 import com.aiusage.monitor.model.QuotaWindow;
+import com.aiusage.monitor.notification.NotificationScheduler;
 import com.aiusage.monitor.provider.codex.CodexProvider;
 import com.aiusage.monitor.refresh.AccountRefreshManager;
 import com.aiusage.monitor.ui.MainActivity;
@@ -227,6 +228,12 @@ public final class AccountListActivity extends Activity {
         bridgesButton.setOnClickListener(view -> startActivity(new android.content.Intent(
                 this, com.aiusage.monitor.ui.bridge.BridgeListActivity.class)));
         actions.addView(bridgesButton, UiKit.matchHeight(this, 50, 12));
+
+        TextView notificationsButton = UiKit.actionButton(this, "通知设置", false);
+        notificationsButton.setContentDescription("通知设置");
+        notificationsButton.setOnClickListener(view -> startActivity(new Intent(
+                this, com.aiusage.monitor.ui.notification.NotificationSettingsActivity.class)));
+        actions.addView(notificationsButton, UiKit.matchHeight(this, 50, 12));
         content.addView(actions, UiKit.matchWrap(this, 16));
 
         TextView privacy = UiKit.text(this,
@@ -260,6 +267,7 @@ public final class AccountListActivity extends Activity {
         // from the detail page or from a widget must be visible on return
         // without this screen having to be told about it.
         renderAccounts();
+        NotificationScheduler.reconcile(this);
     }
 
     @Override
@@ -377,10 +385,12 @@ public final class AccountListActivity extends Activity {
                 break;
             case "停用":
                 accountManager.setEnabled(account.getId(), false);
+                NotificationScheduler.reconcile(this);
                 renderAccounts();
                 break;
             case "启用":
                 accountManager.setEnabled(account.getId(), true);
+                NotificationScheduler.reconcile(this);
                 renderAccounts();
                 break;
             case "重新配对":
@@ -436,6 +446,7 @@ public final class AccountListActivity extends Activity {
                     // The history cleaner is the usage layer's own delete, so
                     // the account layer never reaches into usage storage. §45.
                     accountManager.delete(account.getId(), usageRepository::deleteForAccount);
+                    NotificationScheduler.reconcile(this);
                     // A widget bound to the deleted account falls back to the
                     // first enabled one rather than drawing nothing. Spec §39.
                     widgetUpdateManager.updateAllWidgets();

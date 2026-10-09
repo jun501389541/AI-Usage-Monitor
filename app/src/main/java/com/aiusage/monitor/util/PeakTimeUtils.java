@@ -2,9 +2,9 @@ package com.aiusage.monitor.util;
 
 import android.content.Context;
 
+import com.aiusage.monitor.notification.PeakTimeSchedule;
 import com.aiusage.monitor.storage.HolidayStore;
 
-import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashSet;
 import java.util.Locale;
@@ -19,10 +19,8 @@ public final class PeakTimeUtils {
     public static Status currentStatus(Context context) {
         Calendar now = Calendar.getInstance(BEIJING);
         int minutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
-        boolean workday = isWorkday(context, now);
-        boolean peak = workday
-                && ((minutes >= 9 * 60 && minutes < 12 * 60)
-                || (minutes >= 14 * 60 && minutes < 18 * 60));
+        Set<String> offDays = offDaysForCurrentWindow(context, now);
+        boolean peak = PeakTimeSchedule.isPeakAt(now.getTimeInMillis(), offDays);
 
         String currentTime = String.format(
                 Locale.US,
@@ -35,20 +33,28 @@ public final class PeakTimeUtils {
 
         if (peak) {
             boolean morningPeak = minutes < 12 * 60;
-            String end = morningPeak ? "12:00" : "18:00";
-            Calendar peakEnd = atTime((Calendar) now.clone(), morningPeak ? 12 : 18, 0);
-            String remaining = formatRemaining(peakEnd.getTimeInMillis() - now.getTimeInMillis());
+            PeakTimeSchedule.Transition transition = PeakTimeSchedule.nextTransition(
+                    now.getTimeInMillis(), offDays);
+            Calendar peakEnd = Calendar.getInstance(BEIJING);
+            peakEnd.setTimeInMillis(transition.getAtMillis());
+            String end = String.format(Locale.US, "%02d:%02d",
+                    peakEnd.get(Calendar.HOUR_OF_DAY), peakEnd.get(Calendar.MINUTE));
+            String remaining = formatRemaining(transition.getAtMillis() - now.getTimeInMillis());
             return new Status(true, "高峰时段", "按高峰价格计费", currentTime, end + " 后转为空闲时段", remaining);
         }
 
-        Calendar next = nextPeakStart(context, now, minutes);
+        PeakTimeSchedule.Transition transition = PeakTimeSchedule.nextTransition(
+                now.getTimeInMillis(), offDays);
+        Calendar next = Calendar.getInstance(BEIJING);
+        next.setTimeInMillis(transition.getAtMillis());
         String nextText;
         if (sameDate(now, next)) {
             nextText = String.format(Locale.US, "%02d:%02d 后进入高峰时段", next.get(Calendar.HOUR_OF_DAY), next.get(Calendar.MINUTE));
         } else {
             nextText = dateKey(next) + " 09:00 后进入高峰时段";
         }
-        return new Status(false, "空闲时段", "按高峰价格的 50% 计费", currentTime, nextText, formatRemaining(next.getTimeInMillis() - now.getTimeInMillis()));
+        return new Status(false, "空闲时段", "按高峰价格的 50% 计费", currentTime, nextText,
+                formatRemaining(transition.getAtMillis() - now.getTimeInMillis()));
     }
 
     private static String formatRemaining(long millis) {
@@ -59,41 +65,12 @@ public final class PeakTimeUtils {
         return hours + ":" + String.format(Locale.US, "%02d:%02d", minutes, seconds);
     }
 
-    private static Calendar nextPeakStart(Context context, Calendar now, int minutes) {
-        Calendar candidate = (Calendar) now.clone();
-        if (isWorkday(context, now)) {
-            if (minutes < 9 * 60) {
-                return atTime(candidate, 9, 0);
-            }
-            if (minutes >= 12 * 60 && minutes < 14 * 60) {
-                return atTime(candidate, 14, 0);
-            }
-        }
-
-        do {
-            candidate.add(Calendar.DAY_OF_YEAR, 1);
-            candidate.set(Calendar.HOUR_OF_DAY, 0);
-            candidate.set(Calendar.MINUTE, 0);
-            candidate.set(Calendar.SECOND, 0);
-            candidate.set(Calendar.MILLISECOND, 0);
-        } while (!isWorkday(context, candidate));
-        return atTime(candidate, 9, 0);
-    }
-
-    private static boolean isWorkday(Context context, Calendar calendar) {
-        int dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK);
-        if (dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY) {
-            return false;
-        }
-        return !HolidayStore.getOffDays(context, calendar.get(Calendar.YEAR)).contains(dateKey(calendar));
-    }
-
-    private static Calendar atTime(Calendar calendar, int hour, int minute) {
-        calendar.set(Calendar.HOUR_OF_DAY, hour);
-        calendar.set(Calendar.MINUTE, minute);
-        calendar.set(Calendar.SECOND, 0);
-        calendar.set(Calendar.MILLISECOND, 0);
-        return calendar;
+    private static Set<String> offDaysForCurrentWindow(Context context, Calendar now) {
+        Set<String> result = new HashSet<>();
+        int year = now.get(Calendar.YEAR);
+        result.addAll(HolidayStore.getOffDays(context, year));
+        result.addAll(HolidayStore.getOffDays(context, year + 1));
+        return result;
     }
 
     private static boolean sameDate(Calendar first, Calendar second) {
